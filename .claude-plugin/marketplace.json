@@ -1,0 +1,30 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "camomilekr",
+  "description": "camomilekr가 만든 Claude Code 플러그인 마켓플레이스",
+  "owner": {
+    "name": "Jiho Seo",
+    "email": "camomile.kr@gmail.com",
+    "url": "https://github.com/camomilekr"
+  },
+  "plugins": [
+    {
+      "name": "ide-notify",
+      "description": "Claude Code가 작업을 마치거나 승인·결정을 기다릴 때 시스템 알림을 보냅니다. macOS에서는 알림을 클릭하면 세션을 띄운 터미널/IDE로 포커스가 이동합니다.",
+      "author": {
+        "name": "Jiho Seo",
+        "email": "camomile.kr@gmail.com",
+        "url": "https://github.com/camomilekr"
+      },
+      "homepage": "https://github.com/camomilekr/claude-code-ide-notify",
+      "repository": "https://github.com/camomilekr/claude-code-ide-notify",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["notification", "macos", "linux", "windows", "hooks", "focus"],
+      "source": {
+        "source": "github",
+        "repo": "camomilekr/claude-code-ide-notify"
+      }
+    }
+  ]
+}
