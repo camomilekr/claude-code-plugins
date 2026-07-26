@@ -22,8 +22,8 @@
       "category": "productivity",
       "keywords": ["notification", "macos", "linux", "windows", "hooks", "focus"],
       "source": {
-        "source": "git",
-        "url": "https://github.com/camomilekr/claude-code-ide-notify.git"
+        "source": "github",
+        "repo": "camomilekr/claude-code-ide-notify"
       }
     }
   ]
