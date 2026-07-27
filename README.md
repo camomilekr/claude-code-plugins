@@ -14,7 +14,7 @@ claude plugin marketplace add camomilekr/claude-code-plugins
 
 | 플러그인 | 설명 | 레포 |
 |---|---|---|
-| `ide-notify` | Claude Code가 작업을 마치거나 승인·결정을 기다릴 때 시스템 알림. macOS에서는 알림 클릭 시 세션을 띄운 터미널/IDE로 포커스 이동 | [claude-code-ide-notify](https://github.com/camomilekr/claude-code-ide-notify) |
+| `ide-notify` | Claude Code가 작업을 마치거나, 서브에이전트가 작업을 시작·완료했거나, 승인·결정을 기다릴 때 시스템 알림. macOS에서는 알림 클릭 시 세션을 띄운 터미널/IDE로 포커스 이동 | [claude-code-ide-notify](https://github.com/camomilekr/claude-code-ide-notify) |
 
 ```bash
 claude plugin install ide-notify@camomilekr
