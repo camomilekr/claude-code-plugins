@@ -1,6 +1,6 @@
 {
   "name": "code-review-plugins",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "코드 리뷰 자동화 스킬 모음. CodeRabbit PR 리뷰 코멘트를 분석하고 처리하는 resolve-coderabbit-review 스킬을 제공합니다.",
   "author": {
     "name": "Jiho Seo",

@@ -13,11 +13,15 @@
 #
 # 출력 필드:
 # - id, path, line, body, created_at: 기존 필드 (measure_multi.py 호환 — line은 null이면 0)
-# - thread_id: 리뷰 스레드 GraphQL node ID (수정 완료 후 스레드 resolve 처리용)
+# - thread_id: 리뷰 스레드 GraphQL node ID (스레드 resolve 처리용)
 # - is_outdated: 코드 변경으로 스레드가 outdated 되었는지 여부
 # - original_line, start_line: outdated/멀티라인 코멘트의 원 위치 (없으면 null)
 # - reply_count: 루트 코멘트 이후 답글 수 (이미 반박/답변한 스레드 구분용)
 # - last_reply_author: 마지막 답글 작성자 login (답글 없으면 null)
+# - fix_marker: 이전 실행이 남긴 수정 완료 마커 {commit, at}. 없으면 null
+#     (단계 9 댓글의 <!-- resolve-coderabbit-review:fixed commit=... --> 를 파싱)
+# - coderabbit_reply_after_fix: 마커 이후 CodeRabbit이 남긴 마지막 답글 본문 (없으면 null)
+#     → 단계 2.5에서 "승인 vs 재지적" 판정에 사용. 최대 1200자로 절단.
 
 set -euo pipefail
 
@@ -82,8 +86,10 @@ process_body() {
 }
 
 # GraphQL로 리뷰 스레드 조회 (isResolved/isOutdated + 페이지네이션)
-# rootComment: 스레드의 첫 코멘트 (분석 대상)
-# lastReply: 마지막 코멘트 작성자 (이미 답변한 스레드 구분용)
+# comments: 스레드의 전체 코멘트. nodes[0] = 루트(분석 대상), 나머지 = 답글.
+#   답글 본문이 필요한 이유 — 이전 실행이 남긴 수정 완료 마커와 그 이후 CodeRabbit
+#   응답을 찾아 단계 2.5(스레드 정리)에서 resolve 여부를 판정하기 위함.
+#   답글 본문은 로컬 jq 처리에만 쓰이고, 출력에는 필요한 1건만 절단해서 실린다.
 GRAPHQL_QUERY='
 query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
   repository(owner: $owner, name: $repo) {
@@ -100,7 +106,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
           line
           originalLine
           startLine
-          rootComment: comments(first: 1) {
+          comments(first: 100) {
             totalCount
             nodes {
               databaseId
@@ -108,13 +114,6 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
               path
               line
               createdAt
-              author {
-                login
-              }
-            }
-          }
-          lastReply: comments(last: 1) {
-            nodes {
               author {
                 login
               }
@@ -175,24 +174,53 @@ RAW_COMMENTS=$(echo "$ALL_NODES" | jq --argjson includeResolved "$INCLUDE_RESOLV
   .[]
   | select($includeResolved == 1 or .isResolved == false)
   | . as $thread
-  | .rootComment.nodes[0]
-  | select(. != null)
-  | select(.author != null and (.author.login | startswith("coderabbitai")))
+  | (.comments.nodes // []) as $all
+  | ($all[0] // null) as $root
+  | select($root != null)
+  | select($root.author != null and ($root.author.login | startswith("coderabbitai")))
+  | ($all[1:]) as $replies
+  # 이전 실행이 남긴 수정 완료 마커 중 가장 최근 것 (index 포함)
+  | ([
+      $replies
+      | to_entries[]
+      | select(.value.body != null and (.value.body | contains("<!-- resolve-coderabbit-review:fixed")))
+    ] | last) as $fix
   | {
-      id: .databaseId,
-      path: .path,
-      line: (.line // 0),
-      body: .body,
-      created_at: .createdAt,
+      id: $root.databaseId,
+      path: $root.path,
+      line: ($root.line // 0),
+      body: $root.body,
+      created_at: $root.createdAt,
       thread_id: $thread.id,
       is_outdated: $thread.isOutdated,
       original_line: $thread.originalLine,
       start_line: $thread.startLine,
-      reply_count: ($thread.rootComment.totalCount - 1),
+      reply_count: ($thread.comments.totalCount - 1),
+      # 답글 100개를 초과하는 스레드에서는 100번째 답글 기준 (실사용상 도달하지 않음)
       last_reply_author: (
-        if $thread.rootComment.totalCount > 1
-        then $thread.lastReply.nodes[0].author.login
+        if $thread.comments.totalCount > 1
+        then ($all[-1].author.login // null)
         else null
+        end
+      ),
+      fix_marker: (
+        if $fix == null then null
+        else {
+          commit: ([$fix.value.body | capture("resolve-coderabbit-review:fixed commit=(?<c>[^\\s>]+)")] | first | .c),
+          at: $fix.value.createdAt
+        }
+        end
+      ),
+      coderabbit_reply_after_fix: (
+        if $fix == null then null
+        else (
+          [
+            $replies[($fix.key + 1):][]
+            | select(.author != null and (.author.login | startswith("coderabbitai")))
+          ]
+          | last
+          | if . == null then null else (.body[0:1200]) end
+        )
         end
       )
     }
@@ -202,14 +230,14 @@ RAW_COMMENTS=$(echo "$ALL_NODES" | jq --argjson includeResolved "$INCLUDE_RESOLV
 RESOLVED_COUNT=$(echo "$ALL_NODES" | jq '[
   .[]
   | select(.isResolved == true)
-  | .rootComment.nodes[0]
+  | .comments.nodes[0]
   | select(. != null)
   | select(.author != null and (.author.login | startswith("coderabbitai")))
 ] | length')
 
 TOTAL_COUNT=$(echo "$ALL_NODES" | jq '[
   .[]
-  | .rootComment.nodes[0]
+  | .comments.nodes[0]
   | select(. != null)
   | select(.author != null and (.author.login | startswith("coderabbitai")))
 ] | length')
@@ -225,10 +253,20 @@ if [[ "$RAW_COMMENTS" == "[]" ]] || [[ "$RAW_COMMENTS" == "null" ]]; then
 fi
 
 # 각 코멘트의 body 가공 (그 외 필드는 그대로 유지)
+# coderabbit_reply_after_fix도 같은 방식으로 가공 — 마커 파싱은 이미 끝났으므로
+# HTML 주석을 제거해도 안전하다.
 PROCESSED_COMMENTS=$(echo "$RAW_COMMENTS" | jq -c '.[]' | while read -r comment; do
   body=$(echo "$comment" | jq -r '.body')
   processed_body=$(process_body "$body")
-  echo "$comment" | jq --arg body "$processed_body" '.body = $body'
+
+  reply=$(echo "$comment" | jq -r '.coderabbit_reply_after_fix // empty')
+  if [[ -n "$reply" ]]; then
+    processed_reply=$(process_body "$reply")
+    echo "$comment" | jq --arg body "$processed_body" --arg reply "$processed_reply" \
+      '.body = $body | .coderabbit_reply_after_fix = $reply'
+  else
+    echo "$comment" | jq --arg body "$processed_body" '.body = $body'
+  fi
 done | jq -s '.')
 
 echo "$PROCESSED_COMMENTS"

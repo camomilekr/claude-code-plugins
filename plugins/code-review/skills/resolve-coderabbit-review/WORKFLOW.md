@@ -7,7 +7,24 @@
 - ✅ 적절한 지적 → 코드 수정 → 커밋 후, 지적의 타당성과 수정 내용을 정리한 댓글 작성 (**필수**)
 - ⚠️ 응답 필요 → GitHub 반박/보완 댓글 작성 + 사용자에게 요약/이유 표시
 
-**중요**: 처리한 모든 코멘트에 댓글을 남긴다. 적절한 지적은 수정 완료 후 수정 내용 댓글(단계 9), 반박이 필요한 지적은 반박 댓글(단계 5).
+**중요**: 이번 실행에서 **실제로 처리한** 모든 코멘트에 댓글을 남긴다. 코드를 수정한 지적은 수정 내용 댓글(단계 9), 반박이 필요한 지적은 반박 댓글(단계 5).
+
+사용자가 수정을 스킵한 항목(Minor 미선택 포함)에는 댓글을 남기지 않는다 — 미처리 상태로 스레드를 열어두어 다음 실행에서 다시 다룬다.
+
+### 스레드 수명 주기
+
+스레드는 **다음 실행 시점에** 정리된다(단계 2.5). 수정 직후에 바로 resolve 하지 않는 이유는, CodeRabbit이 우리 수정을 실제로 납득했는지 확인한 뒤 닫기 위해서다.
+
+```
+[1회차] 수정 → 커밋·푸시 → 수정 완료 댓글(마커 포함, 단계 9)
+            ↓
+        CodeRabbit이 답글로 반응
+            ↓
+[2회차] 코멘트 수집(단계 2) → 스레드 정리(단계 2.5)
+            ├─ CodeRabbit 승인   → resolve 후 분석 대상에서 제외
+            ├─ CodeRabbit 재지적 → 열어둔 채 분석 대상에 포함
+            └─ 답글 없음        → 열어둔 채 응답 대기로 보고
+```
 
 ---
 
@@ -46,6 +63,30 @@ gh pr view {pr_number} --json state,merged --jq '{state, merged}'
 
 **참고**: `fetch-coderabbit-comments.sh` 스크립트가 자동으로 PR 상태를 확인하고 경고를 출력합니다.
 
+### 브랜치 일치 검증 (**필수** — 코드 수정 전 반드시 통과해야 함)
+
+단계 6~8은 **로컬 워킹트리를 수정하고 현재 브랜치를 푸시**합니다. PR 번호를 인자로 받는 구조상, 분석 대상 PR과 체크아웃된 브랜치가 다르면 엉뚱한 브랜치에 커밋·푸시하게 됩니다.
+
+```bash
+# PR의 head 브랜치와 fork 여부 확인
+gh pr view {pr_number} --json headRefName,isCrossRepository --jq '{headRefName, isCrossRepository}'
+
+# 현재 체크아웃된 브랜치
+git rev-parse --abbrev-ref HEAD
+
+# 워킹트리 상태 (스테이징되지 않은 무관한 변경 확인)
+git status --porcelain
+```
+
+| 검증 결과 | 동작 |
+|-----------|------|
+| 브랜치 일치 + 워킹트리 clean | 정상 진행 |
+| **브랜치 불일치** | 코드 수정 단계(6~9)를 **차단**. 분석·반박 댓글(단계 5)까지만 수행하고, 사용자에게 `git switch {headRefName}` 안내 |
+| 워킹트리에 무관한 변경 존재 | 경고 표시. 단계 8은 수정한 파일만 명시적으로 스테이징하므로 진행 가능 |
+| `isCrossRepository: true` (fork PR) | 푸시 권한이 없을 수 있음을 경고. 커밋까지만 하고 푸시 실패 시 단계 8의 폴백 적용 |
+
+**중요**: 브랜치 불일치는 사용자 확인으로 넘어갈 수 있는 항목이 아닙니다. 자동 커밋·푸시가 사용자 확인 없이 실행되므로(단계 8), 이 검증이 유일한 안전장치입니다.
+
 ---
 
 ## 단계 2: CodeRabbit 코멘트 수집 (메인 에이전트)
@@ -75,23 +116,115 @@ ${CLAUDE_PLUGIN_ROOT}/skills/resolve-coderabbit-review/scripts/fetch-coderabbit-
 #     "original_line": 42,
 #     "start_line": null,
 #     "reply_count": 0,
-#     "last_reply_author": null
+#     "last_reply_author": null,
+#     "fix_marker": null,
+#     "coderabbit_reply_after_fix": null
 #   },
 #   ...
 # ]
 ```
 
-**추가 필드 활용**:
+### 수집 범위 한계
 
-- `is_outdated: true` → 코드가 이미 변경된 위치에 대한 지적. 현재 코드 기준으로 여전히 유효한지 먼저 확인 (원 위치는 `original_line` 참고)
-- `reply_count > 0` + `last_reply_author`가 CodeRabbit이 아닌 사용자 → 이미 답변한 스레드일 수 있으므로 중복 반박 주의
-- `thread_id` → 수정 완료 후 스레드 resolve 처리에 사용 가능 (GraphQL `resolveReviewThread` mutation)
+스크립트는 GraphQL `reviewThreads`, 즉 **코드 라인에 달린 리뷰 코멘트만** 수집합니다. 다음은 수집되지 않습니다:
+
+- PR 본문에 달리는 CodeRabbit **Walkthrough / Summary** 코멘트
+- `<details>`로 접혀 있는 **Nitpick 묶음** (개별 스레드가 아닌 요약 코멘트에 포함된 것)
+- `Actionable comments posted: N` 헤더 코멘트
+
+이들이 필요하면 별도로 `gh pr view {pr} --json comments` 를 사용해야 합니다.
+
+### 필드 활용
+
+| 필드 | 활용 위치 | 규칙 |
+|------|----------|------|
+| `fix_marker`, `coderabbit_reply_after_fix` | 단계 2.5 | 이전 실행이 처리한 스레드 판별 및 resolve |
+| `is_outdated`, `original_line` | 단계 3 | 코드가 이미 변경된 위치. 현재 코드 기준 유효성을 먼저 확인 |
+| `line == 0` | 단계 3 | line이 null인 경우(파일 삭제·outdated). `original_line`으로 폴백하고, 그것도 null이면 파일 전체를 읽어 판단 |
+| `reply_count`, `last_reply_author` | 단계 2.5 / 단계 5 | 이미 답변한 스레드에 중복 반박 금지 |
+
+> **`last_reply_author` 표기 주의**: GraphQL은 `coderabbitai`(접미사 없음), REST는 `coderabbitai[bot]`으로 login을 반환합니다. 정확히 일치하는지 비교하지 말고 **`coderabbitai`로 시작하는지**로 판정하세요.
+>
+> **`line: 0`은 예외가 아니라 흔한 케이스입니다** — 실측 PR에서 4건 중 3건이 `line: 0` + `original_line` 유효였습니다. 폴백 처리를 반드시 구현하세요.
+| `thread_id` | 단계 2.5 | `resolveReviewThread` mutation 대상 |
+
+**중요**: 이 필드들은 단계 3에서 판단을 수행하는 주체(메인 에이전트 또는 Subagent)에게 **반드시 전달**해야 합니다. 수집만 하고 프롬프트에 넣지 않으면 아무 효과가 없습니다.
+
+---
+
+## 단계 2.5: 이전 라운드 스레드 정리 (메인 에이전트)
+
+단계 3 분석에 들어가기 **전에** 실행합니다. 이전 실행이 이미 처리한 스레드를 걸러내어, 같은 지적을 두 번 분석하고 두 번 댓글 다는 것을 막습니다.
+
+### 분류
+
+`fix_marker`가 있는 코멘트는 이전 실행에서 수정·커밋·댓글까지 끝난 항목입니다. `coderabbit_reply_after_fix` 내용을 읽고 CodeRabbit이 수긍했는지 판단합니다.
+
+| `fix_marker` | `coderabbit_reply_after_fix` | 판정 | resolve | 단계 3 분석 |
+|---|---|---|---|---|
+| 있음 | CodeRabbit **승인/수긍** | 처리 완료 | ✅ resolve | 제외 |
+| 있음 | CodeRabbit **재지적/반박** | 재검토 필요 | ❌ | **포함** (아래 컨텍스트 전달) |
+| 있음 | `null` (답글 없음) | 응답 대기 | ❌ | 제외 (단계 10에 "응답 대기"로 보고) |
+| 없음 | — | 신규 지적 | ❌ | 포함 |
+
+### 승인 vs 재지적 판단 기준
+
+| 신호 | 예시 |
+|------|------|
+| **승인** | "Thanks for addressing", "Looks good", "✅ Addressed in commit", "You're right", 수정 확인만 언급하고 새 요구가 없음 |
+| **재지적** | "However", "still", 새로운 `suggestion` 블록, 추가 수정 요구, 다른 문제 제기 |
+
+**판단이 애매하면 resolve하지 않습니다.** 스레드를 잘못 닫는 것보다 한 번 더 여는 쪽이 안전합니다. resolve하지 않은 애매한 항목은 단계 3 분석 대상에 포함시킵니다.
+
+### resolve 실행
+
+```bash
+gh api graphql -f query='
+mutation($threadId: ID!) {
+  resolveReviewThread(input: {threadId: $threadId}) {
+    thread { id isResolved }
+  }
+}' -F threadId="{thread_id}"
+```
+
+**스킵 조건** — 실패해도 워크플로를 중단하지 않고 경고만 표시합니다:
+
+- PR이 MERGED/CLOSED 상태
+- 권한 부족 (fork PR, 쓰기 권한 없는 저장소) → `⚠️ 스레드 resolve 권한 없음 — 수동 처리 필요` 표시
+
+### 재지적 케이스의 컨텍스트 전달
+
+CodeRabbit이 재지적한 스레드는 단계 3 프롬프트에 이전 라운드 맥락을 함께 넣습니다:
+
+```
+이 지적은 이전 실행에서 커밋 {fix_marker.commit}로 수정했으나,
+CodeRabbit이 다음과 같이 재지적했습니다:
+
+{coderabbit_reply_after_fix}
+
+현재 코드를 다시 읽고, 재지적이 타당한지 판단하세요.
+```
+
+### 결과 표시
+
+```markdown
+🧹 이전 라운드 정리: {n}건 resolve, {m}건 응답 대기, {k}건 재지적으로 재분석
+```
 
 ---
 
 ## 단계 3: 코멘트별 분석
 
 **이 단계가 핵심입니다.**
+
+### 분석 대상 없음 처리
+
+단계 2.5를 거친 뒤 분석 대상이 0건이면 단계 4~9를 모두 건너뛰고 단계 10으로 직행합니다.
+
+```markdown
+✅ 처리할 CodeRabbit 코멘트가 없습니다.
+(전체 {total}건 중 resolved {resolved}건, 이번 실행에서 정리 {cleaned}건, 응답 대기 {pending}건)
+```
 
 ### 처리 방식 선택
 
@@ -117,9 +250,12 @@ ${CLAUDE_PLUGIN_ROOT}/skills/resolve-coderabbit-review/scripts/fetch-coderabbit-
 ```
 각 코멘트에 대해:
 1. 해당 파일의 코드 읽기 (Read 도구)
+   - line == 0 이면 original_line으로 폴백, 둘 다 없으면 파일 전체 읽기
 2. CodeRabbit 지적 내용 검토
-3. 적절성 판단
-4. 반박 필요 시 반박 내용 작성
+   - is_outdated == true 이면 현재 코드 기준으로 여전히 유효한 지적인지 먼저 확인
+   - 재지적 스레드(단계 2.5)는 이전 수정 커밋과 CodeRabbit 재지적 내용을 함께 고려
+3. 적절성 판단 (appropriate / needs_response)
+4. needs_response인 경우 응답 내용 작성 (한국어)
 ```
 
 ---
@@ -139,8 +275,12 @@ ${CLAUDE_PLUGIN_ROOT}/skills/resolve-coderabbit-review/scripts/fetch-coderabbit-
   else:  # 그룹 코멘트 수 ≥ 2
     → 파일 그룹 프롬프트 사용 (B-2)
 
-Task(subagent_type="code-reviewer", prompt=...)  # 그룹별 1 Subagent, 병렬 실행
+Agent(subagent_type="general-purpose", prompt=...)  # 그룹별 1 Subagent, 병렬 실행
 ```
+
+> **subagent_type 주의**: 이 플러그인은 전용 에이전트를 번들하지 않으므로 어느 환경에나 존재하는 `general-purpose`를 사용합니다. 저장소에 코드 리뷰 전용 에이전트가 있다면 그것으로 교체해도 됩니다.
+>
+> **도구 이름 주의**: Subagent 실행 도구는 환경에 따라 `Agent` 또는 `Task`로 노출됩니다. 사용 가능한 쪽을 쓰면 됩니다.
 
 > **분기 이유**: 파일에 코멘트가 1개뿐인 그룹은 그룹 프롬프트의 JSON 배열 + 추가 지침이 오버헤드만 늘리고 절약 효과가 없습니다(평균 -68토큰 손해). 단일 코멘트 프롬프트로 폴백하면 손해를 0으로 만들 수 있습니다. 같은 파일에 코멘트가 2개 이상 모인 그룹에서만 그룹핑 효과(파일을 1번만 읽음)가 발생합니다.
 
@@ -152,12 +292,21 @@ CodeRabbit 리뷰 코멘트를 분석하고 적절성을 판단하세요.
 코멘트 정보:
 - ID: {id}
 - 파일: {path}
-- 라인: {line}
+- 라인: {line}  (0이면 위치 불명 — original_line {original_line} 참고)
+- outdated: {is_outdated}  (true면 이 코멘트 이후 코드가 변경됨)
 - 내용: {body}
+
+{재지적 스레드인 경우에만 추가:
+ 이 지적은 이전 실행에서 커밋 {fix_marker.commit}로 수정했으나,
+ CodeRabbit이 다음과 같이 재지적했습니다:
+ {coderabbit_reply_after_fix}}
 
 작업:
 1. 해당 파일의 코드 읽기 (Read 도구로 {path} 파일의 line {line} 주변 읽기)
+   - line이 0이면 original_line 주변을, 그것도 없으면 파일 전체를 읽으세요
 2. CodeRabbit 지적 내용과 실제 코드 비교
+   - outdated가 true면 "현재 코드에서도 여전히 유효한 지적인가"를 먼저 판단하세요.
+     이미 해결된 지적이면 needs_response로 분류하고 해결됐음을 응답에 적으세요
 3. 적절성 판단:
    - ✅ appropriate: 지적이 타당하고 코드 수정이 필요함
    - ❌ needs_response: 오해, 의도적 설계, 또는 추가 설명이 필요함
@@ -185,8 +334,16 @@ CodeRabbit 리뷰 코멘트를 분석하고 적절성을 판단하세요.
 
 코멘트 목록:
 [
-  { "id": {id_1}, "line": {line_1}, "body": "{body_1}" },
-  { "id": {id_2}, "line": {line_2}, "body": "{body_2}" },
+  {
+    "id": {id_1}, "line": {line_1}, "original_line": {original_line_1},
+    "is_outdated": {is_outdated_1}, "body": "{body_1}",
+    "previous_fix": null
+  },
+  {
+    "id": {id_2}, "line": {line_2}, "original_line": {original_line_2},
+    "is_outdated": {is_outdated_2}, "body": "{body_2}",
+    "previous_fix": { "commit": "{commit}", "coderabbit_reply": "{재지적 내용}" }
+  },
   ...
 ]
 
@@ -194,6 +351,9 @@ CodeRabbit 리뷰 코멘트를 분석하고 적절성을 판단하세요.
 1. 해당 파일의 코드 읽기 (Read 도구로 {path} 파일 읽기 — 한 번만 읽고 모든 코멘트에 활용)
 2. 각 코멘트에 대해:
    a. CodeRabbit 지적 내용과 실제 코드 비교
+      - line이 0이면 original_line을 위치 기준으로 사용
+      - is_outdated가 true면 현재 코드에서도 유효한 지적인지 먼저 판단
+      - previous_fix가 있으면 이전 수정과 CodeRabbit 재지적을 함께 고려
    b. 적절성 판단:
       - ✅ appropriate: 지적이 타당하고 코드 수정이 필요함
       - ❌ needs_response: 오해, 의도적 설계, 또는 추가 설명이 필요함
@@ -321,21 +481,28 @@ CodeRabbit 지적이 100% 타당한가?
 
 appropriate verdict의 댓글은 코드 수정과 커밋·푸시가 끝난 뒤 단계 9에서 작성합니다 (수정 내용을 정리해야 하므로 이 시점에는 작성하지 않음).
 
+### 중복 반박 방지 (**필수**)
+
+`reply_count > 0` 이고 `last_reply_author`가 CodeRabbit이 아닌 경우, **이미 사람이 답변한 스레드**입니다. 같은 논지의 반박을 또 달지 않습니다.
+
+- 이전 답변과 논지가 같음 → 스킵하고 단계 10에 "이미 답변됨"으로 보고
+- 새로 추가할 내용이 있음 → 작성하되 이전 답변을 반복하지 말 것
+
 ### 사용자 확인
 
-```
-AskUserQuestion:
-"다음 코멘트에 응답 댓글을 작성하시겠습니까?"
+`AskUserQuestion`으로 확인받습니다. 응답 대상이 여러 건이면 **`multiSelect: true`로 항목을 나열**하여 사용자가 개별 선택하게 합니다 (옵션은 최대 4개이므로, 5건 이상이면 대표 항목만 옵션으로 두고 나머지는 질문 본문에 나열합니다).
 
-응답 대상:
-1. {path}:{line} - "{response_content}"
-2. ...
-
-옵션:
-- [작성] 모든 응답 댓글 작성
-- [선택] 일부만 선택
-- [취소] 댓글 작성 안 함
 ```
+question: "다음 {n}건에 응답 댓글을 작성할까요?"
+header: "응답 댓글"
+multiSelect: true
+options:
+  - "{path_1}:{line_1} — {summary_1}"
+  - "{path_2}:{line_2} — {summary_2}"
+  ...
+```
+
+작성할 댓글 전문은 질문 직전에 단계 4 형식으로 미리 보여줍니다. 사용자가 아무것도 선택하지 않으면 이 단계를 건너뜁니다.
 
 ### GitHub API 호출
 
@@ -371,23 +538,42 @@ gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies \
 
 ### 사용자 확인
 
+수정 대상 전체 목록(Critical/Major/Minor 구분)을 먼저 텍스트로 보여준 뒤, `AskUserQuestion`으로 선택받습니다.
+
+**대상이 4건 이하**면 `multiSelect: true`로 항목을 직접 나열합니다:
+
 ```
-AskUserQuestion:
-"다음 CodeRabbit 지적에 대해 코드를 수정하시겠습니까?"
-
-🔴🟠 수정 권장:
-1. {path}:{line} - {summary} 🔴
-2. {path}:{line} - {summary} 🟠
-...
-
-🟡 참고 (Minor):
-3. {path}:{line} - {summary}
-
-옵션:
-- [모두 수정] 권장 항목 모두 수정
-- [선택 수정] 일부만 선택
-- [수정 안함] 스킵
+question: "다음 {n}건을 수정할까요?"
+header: "수정 대상"
+multiSelect: true
+options:
+  - "{path_1}:{line_1} — {summary_1} 🔴"
+  - "{path_2}:{line_2} — {summary_2} 🟠"
+  ...
 ```
+
+**5건 이상**이면 옵션 4개 제한 때문에 항목을 직접 나열할 수 없으므로, 묶음 단위로 선택받습니다:
+
+```
+question: "{n}건 중 어디까지 수정할까요? (전체 목록은 위 표 참고)"
+header: "수정 범위"
+multiSelect: false
+options:
+  - "Critical + Major 모두 ({k}건)"   ← 권장
+  - "Critical만 ({j}건)"
+  - "전체 ({n}건, Minor 포함)"
+  - "수정 안 함"
+```
+
+개별 선택이 필요하다면 사용자가 "Other"로 항목 번호를 지정하게 합니다.
+
+### 수정하지 않은 항목의 처리
+
+사용자가 선택하지 않은 항목(Minor 등)은:
+
+- 코드를 수정하지 않습니다
+- **댓글도 작성하지 않습니다** (단계 9는 실제 수정한 항목만 대상)
+- 스레드를 열어둔 채 단계 10에 "사용자가 수정 스킵"으로 보고합니다 → 다음 실행에서 다시 다뤄집니다
 
 ### 코드 수정 실행
 
@@ -402,6 +588,7 @@ AskUserQuestion:
 - 복잡한 수정은 사용자에게 설명 후 진행
 - 수정 전후 diff를 보여줌
 - 에러 발생 시 롤백 안내
+- 수정한 파일 경로를 기록해 둡니다 — 단계 7(타입 검증 대상)과 단계 8(스테이징 대상)에서 사용
 
 ---
 
@@ -412,21 +599,31 @@ AskUserQuestion:
 단계 6에서 코드 수정이 발생한 `.ts`/`.tsx` 파일이 있는 경우에만 실행됩니다.
 비-TypeScript 파일(`.md`, `.sh`, `.css` 등)만 수정된 경우 이 단계를 건너뜁니다.
 
-### 검증 방식
+### 검증 방식 선택
 
-수정된 파일의 **상위 모듈 디렉토리**를 대상으로 임시 tsconfig를 생성하여 스코프된 타입 체크를 수행합니다.
-전체 프로젝트 tsc가 아닌 디렉토리 단위 체크로, 수 초 내에 완료됩니다.
+저장소 구조에 따라 두 방식 중 하나를 사용합니다.
 
-### 검증 절차 (의사코드 — Claude가 참고하여 Bash 도구로 실행)
+```
+apps/whatap-front/tsconfig.app.json 이 존재하는가?
+    ├─ YES → 방식 A: 스코프된 모듈 단위 검증 (whatap-front 전용)
+    └─ NO  → 방식 B: 범용 검증
+```
+
+---
+
+### 방식 A: 스코프된 모듈 단위 검증 (whatap-front 전용)
+
+**적용 조건**: `apps/whatap-front/tsconfig.app.json` 이 존재할 때만.
+
+수정된 파일의 **상위 모듈 디렉토리**만 대상으로 임시 tsconfig를 만들어 검사합니다. 모노레포 전체 tsc는 수 분이 걸리지만 이 방식은 수 초에 끝납니다.
 
 **Step 1**: 수정된 `.ts`/`.tsx` 파일의 상위 모듈 디렉토리를 추출합니다.
 
-디렉토리 추출 규칙:
 - FSD 구조 (`src/fsd/{domain}/{layer}/{module}/...`) → `src/fsd/{domain}/{layer}/{module}/**/*`
 - Service 등 기타 (`src/service/{category}/...`) → `src/service/{category}/**/*`
 - `apps/whatap-front/` 외부 파일 (packages/ 등) → 검증 대상에서 제외
 
-**Step 2**: 임시 tsconfig 생성
+**Step 2**: 임시 tsconfig 생성 (Write 도구)
 
 ```json
 // apps/whatap-front/tsconfig.verify.json
@@ -444,15 +641,37 @@ node_modules/.pnpm/node_modules/.bin/tsc --noEmit --pretty false \
   -p apps/whatap-front/tsconfig.verify.json 2>&1
 ```
 
-**Step 4**: 임시 tsconfig 삭제
+**Step 4**: 임시 tsconfig 삭제 (검증 실패 여부와 무관하게 **반드시** 실행)
 
 ```bash
 rm -f apps/whatap-front/tsconfig.verify.json
 ```
 
-**폴백**: tsc 실행이 실패(OOM, 경로 에러 등)하면 `⚠️ 타입 검증 스킵 (실행 실패)` 를 표시하고 단계 8로 진행합니다. 검증 실패가 커밋을 차단하지 않습니다.
+**한계**: 모듈 디렉토리 내부의 타입만 검증합니다. cross-module 의존성(다른 모듈에서 import하는 타입이 깨진 경우)은 감지하지 못할 수 있습니다.
 
-**한계**: 이 방식은 모듈 디렉토리 내부의 타입만 검증합니다. cross-module 의존성(다른 모듈에서 import하는 타입이 깨진 경우)은 감지하지 못할 수 있습니다.
+---
+
+### 방식 B: 범용 검증 (그 외 모든 저장소)
+
+**Step 1**: 프로젝트의 타입 체크 수단을 순서대로 탐색합니다.
+
+| 우선순위 | 조건 | 실행 명령 |
+|---|---|---|
+| 1 | `package.json`의 `scripts`에 `typecheck` / `type-check` / `tsc` 가 있음 | `{pm} run {script}` |
+| 2 | 루트에 `tsconfig.json` 존재 | `npx tsc --noEmit --pretty false` |
+| 3 | 위 어느 것도 없음 | 검증 스킵 |
+
+패키지 매니저는 락파일로 판별합니다: `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `package-lock.json` → `npm`.
+
+**Step 2**: 실행 후 결과를 아래 "결과 처리" 표에 따라 해석합니다.
+
+**주의**: 방식 B는 프로젝트 전체를 검사하므로 대형 저장소에서는 수십 초 이상 걸릴 수 있습니다. 60초를 넘기면 중단하고 `⚠️ 타입 검증 시간 초과 — 스킵` 으로 처리합니다.
+
+---
+
+### 공통 폴백
+
+tsc 실행이 실패(OOM, 경로 에러, 명령 없음 등)하면 `⚠️ 타입 검증 스킵 (실행 실패)` 를 표시하고 단계 8로 진행합니다. **검증 실패가 커밋을 차단하지 않습니다.**
 
 ### 결과 처리
 
@@ -471,7 +690,13 @@ rm -f apps/whatap-front/tsconfig.verify.json
 
 ### 조건
 
-단계 6에서 코드 수정이 발생하고, 단계 7 타입 검증을 통과했거나 스킵된 경우에 실행됩니다.
+다음을 **모두** 만족할 때만 실행됩니다:
+
+1. 단계 1의 **브랜치 일치 검증 통과** (PR head 브랜치 == 현재 브랜치)
+2. 단계 6에서 코드 수정 발생
+3. 단계 7 타입 검증 통과 또는 스킵
+
+브랜치가 일치하지 않으면 이 단계를 실행하지 않습니다 — 사용자 확인 없이 푸시하는 단계이므로 예외를 두지 않습니다.
 
 ### 자동 Commit & Push (사용자 확인 불필요)
 
@@ -505,7 +730,9 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 git push origin HEAD
 ```
 
-**푸시 실패 시**: 원격에 새 커밋이 있으면 `git pull --rebase` 후 재시도합니다. 그래도 실패하면 커밋 상태를 유지한 채 사용자에게 알리고, 단계 9의 수정 완료 댓글에는 푸시 실패 사실을 반영하지 않습니다(로컬 커밋 해시 사용).
+**커밋 실패 시** (pre-commit hook 등): hook이 파일을 자동 수정했다면 다시 스테이징 후 1회 재시도합니다. lint/test 실패로 hook이 거부하면 **커밋하지 않고 중단**하고, 에러 내용과 함께 사용자에게 알립니다. 이 경우 단계 9의 수정 완료 댓글도 작성하지 않습니다(수정이 아직 반영되지 않았으므로).
+
+**푸시 실패 시**: 원격에 새 커밋이 있으면 `git pull --rebase` 후 재시도합니다. 그래도 실패하면(권한 없음, protected branch 등) 커밋 상태를 유지한 채 사용자에게 알립니다. 이때 단계 9의 수정 완료 댓글은 **작성하되** 로컬 커밋 해시를 쓰고, 최종 보고에 푸시 실패를 명시합니다.
 
 ### 결과 표시
 
@@ -537,7 +764,21 @@ git push origin HEAD
 **수정 내용**: {무엇을 어떻게 수정했는지 정리}
 
 수정 커밋: {commit_hash}
+
+<!-- resolve-coderabbit-review:fixed commit={commit_hash} -->
 ```
+
+### 마커 (**필수** — 생략하면 단계 2.5가 동작하지 않음)
+
+댓글 **맨 마지막 줄**에 다음 HTML 주석을 반드시 포함합니다:
+
+```
+<!-- resolve-coderabbit-review:fixed commit={commit_hash} -->
+```
+
+- GitHub 마크다운에서 렌더링되지 않으므로 사람 눈에는 보이지 않습니다
+- 다음 실행의 단계 2.5가 이 마커로 "이전 라운드에 처리 완료된 스레드"를 식별합니다
+- `commit=` 값은 단계 8의 실제 커밋 해시입니다. 형식을 바꾸면 스크립트의 파싱이 깨집니다
 
 ### GitHub API 호출
 
@@ -545,7 +786,9 @@ git push origin HEAD
 # 해당 리뷰 코멘트에 답장
 gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies \
   --method POST \
-  -f body="@coderabbitai 지적이 타당하여 수정했습니다. ..."
+  -f body="@coderabbitai 지적이 타당하여 수정했습니다. ...
+
+<!-- resolve-coderabbit-review:fixed commit=abc1234 -->"
 ```
 
 ---
@@ -565,16 +808,23 @@ gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies \
 
 ### Actions Taken
 
+- 🧹 {n} threads resolved (이전 라운드 처리 완료분)
 - ✅ {n} comments analyzed and summarized
 - 💬 {n} rebuttal comments posted to GitHub
 - 🔧 {n} code fixes applied
 - 📝 {n} fix-summary comments posted to GitHub
-- 🔍 Type verification: {pass/fail/skipped}
+- 🔍 Type verification: {pass/fail/skipped} ({방식 A/방식 B})
 - 📦 Commit & Push: {commit_hash} (if committed)
+
+### 열려 있는 스레드
+
+- ⏳ {n}건 — 수정 완료 댓글을 달았으나 CodeRabbit 응답 대기 중 (다음 실행에서 정리)
+- 🔄 {n}건 — CodeRabbit이 재지적하여 이번에 재분석함
+- ⏭️ {n}건 — 사용자가 수정을 스킵함 (Minor 등)
 
 ### Next Steps
 
-- 응답한 항목은 CodeRabbit 응답 대기
+- 응답한 항목은 CodeRabbit 응답 대기 → 다음 실행 시 자동 정리됨
 - 수정하지 않은 Minor 항목 검토 (선택)
 ```
 
@@ -584,12 +834,22 @@ gh api repos/{owner}/{repo}/pulls/{pr}/comments/{comment_id}/replies \
 
 ### API 오류
 
-- 404: PR 번호 확인 요청
-- 403: `gh auth login` 상태 확인
+| 상황 | 대응 |
+|------|------|
+| 404 | PR 번호 / 저장소 확인 요청 |
+| 401·403 (인증) | `gh auth status` 확인 요청 |
+| 403 (secondary rate limit) | 잠시 대기 후 1회 재시도, 실패 시 중단하고 사용자에게 알림 |
+| GraphQL 권한 부족 | 스레드 조회는 read 권한, resolve는 write 권한 필요. resolve만 실패하면 경고 후 진행 |
+| fork PR에서 댓글 실패 | 분석 결과만 출력하고 댓글 작성 스킵 |
+
+### 스크립트 실행 실패
+
+- `gh` / `jq` / `perl` 미설치 → 스크립트가 어떤 명령이 없는지 출력하고 종료. 설치 안내 후 중단
+- 스크립트가 `[]` 반환 → 단계 3의 "분석 대상 없음" 경로로 진행
 
 ### 파일 읽기 실패
 
-- 삭제된 파일: 분석 스킵 후 사용자에게 알림
+- 삭제된 파일: 분석 스킵 후 사용자에게 알림. 해당 스레드는 `is_outdated: true`인 경우가 많으므로 "이미 해결됨" 응답 후보로 처리
 
 ---
 

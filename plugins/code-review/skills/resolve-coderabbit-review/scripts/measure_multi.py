@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-review-coderabbit 스킬 개선 토큰 비용 벤치마크 측정 스크립트.
+resolve-coderabbit-review 스킬 개선 토큰 비용 벤치마크 측정 스크립트.
 
 구버전(코멘트 1개 = 1 Subagent)과 신버전(파일 1개 = 1 Subagent)의
 가변 토큰 사용량을 비교 측정한다.
@@ -39,9 +39,12 @@ except ImportError:
 
 ENCODING = tiktoken.get_encoding("cl100k_base")
 
-# 스크립트 기준 레포 루트 경로
+# 측정 대상 레포 루트.
+# 이 스킬은 플러그인 저장소에 있고 측정 대상은 별개의 프로덕트 저장소이므로,
+# 스크립트 위치에서 유도할 수 없다. 기본값은 실행 시점의 현재 디렉토리이며
+# --repo-root 로 덮어쓴다. (측정 대상 저장소에서 실행할 것)
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parents[3]  # .claude/skills/review-coderabbit/scripts → repo root
+REPO_ROOT = Path.cwd()
 FETCH_SCRIPT = SCRIPT_DIR / "fetch-coderabbit-comments.sh"
 
 # --- 프롬프트 템플릿 ---
@@ -357,7 +360,7 @@ def print_results(results: list[dict]) -> None:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="review-coderabbit 스킬 구버전/신버전 토큰 비용 비교 측정",
+        description="resolve-coderabbit-review 스킬 구버전/신버전 토큰 비용 비교 측정",
     )
     parser.add_argument(
         "pr_numbers",
@@ -381,8 +384,25 @@ def main():
         default=300,
         help="라운드 클러스터링 윈도우 (초). 기본 300초(5분).",
     )
+    parser.add_argument(
+        "--repo-root",
+        type=str,
+        default=None,
+        help="측정 대상 레포 루트 (기본: 현재 디렉토리). 파일 토큰 계산 기준 경로.",
+    )
 
     args = parser.parse_args()
+
+    if args.repo_root:
+        global REPO_ROOT
+        REPO_ROOT = Path(args.repo_root).resolve()
+
+    if not (REPO_ROOT / ".git").exists():
+        print(
+            f"  ⚠️  {REPO_ROOT} 는 git 레포 루트가 아닙니다. "
+            "측정 대상 저장소에서 실행하거나 --repo-root 를 지정하세요.",
+            file=sys.stderr,
+        )
 
     pr_numbers: list[int] = list(args.pr_numbers or [])
 
