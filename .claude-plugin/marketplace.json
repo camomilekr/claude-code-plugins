@@ -16,15 +16,12 @@
         "email": "camomile.kr@gmail.com",
         "url": "https://github.com/camomilekr"
       },
-      "homepage": "https://github.com/camomilekr/claude-code-ide-notify",
-      "repository": "https://github.com/camomilekr/claude-code-ide-notify",
+      "homepage": "https://github.com/camomilekr/claude-code-plugins/tree/main/plugins/ide-notify",
+      "repository": "https://github.com/camomilekr/claude-code-plugins",
       "license": "MIT",
       "category": "productivity",
       "keywords": ["notification", "macos", "linux", "windows", "hooks", "focus"],
-      "source": {
-        "source": "github",
-        "repo": "camomilekr/claude-code-ide-notify"
-      }
+      "source": "./plugins/ide-notify"
     },
     {
       "name": "code-review-plugins",
@@ -34,15 +31,12 @@
         "email": "camomile.kr@gmail.com",
         "url": "https://github.com/camomilekr"
       },
-      "homepage": "https://github.com/camomilekr/code-review-plugins",
-      "repository": "https://github.com/camomilekr/code-review-plugins",
+      "homepage": "https://github.com/camomilekr/claude-code-plugins/tree/main/plugins/code-review",
+      "repository": "https://github.com/camomilekr/claude-code-plugins",
       "license": "MIT",
       "category": "productivity",
       "keywords": ["code-review", "coderabbit", "pr", "github", "skill"],
-      "source": {
-        "source": "github",
-        "repo": "camomilekr/code-review-plugins"
-      }
+      "source": "./plugins/code-review"
     }
   ]
 }

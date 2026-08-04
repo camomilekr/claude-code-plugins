@@ -1,0 +1,4 @@
+.DS_Store
+*.log
+build/
+.claude/settings.local.json

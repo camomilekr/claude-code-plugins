@@ -1,0 +1,14 @@
+{
+  "name": "code-review-plugins",
+  "version": "0.1.0",
+  "description": "코드 리뷰 자동화 스킬 모음. CodeRabbit PR 리뷰 코멘트를 분석하고 처리하는 resolve-coderabbit-review 스킬을 제공합니다.",
+  "author": {
+    "name": "Jiho Seo",
+    "email": "camomile.kr@gmail.com",
+    "url": "https://github.com/camomilekr"
+  },
+  "homepage": "https://github.com/camomilekr/claude-code-plugins/tree/main/plugins/code-review",
+  "repository": "https://github.com/camomilekr/claude-code-plugins",
+  "license": "MIT",
+  "keywords": ["code-review", "coderabbit", "pr", "github", "skill"]
+}

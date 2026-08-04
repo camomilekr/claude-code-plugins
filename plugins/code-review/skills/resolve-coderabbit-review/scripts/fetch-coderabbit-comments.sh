@@ -1,0 +1,234 @@
+#!/bin/bash
+# CodeRabbit 코멘트 수집 스크립트 (토큰 최적화 버전)
+# 사용법: ./fetch-coderabbit-comments.sh <pr_number> [repo]
+# 예시: ./fetch-coderabbit-comments.sh 5665 whatap/whatap-front
+#
+# 토큰 절약을 위해 body에서 불필요한 섹션 제거:
+# - <details>🧩 Analysis chain</details> - CodeRabbit 내부 분석 로그
+# - <details>🤖 Prompt for AI Agents</details> - AI 에이전트용 지침
+# - <!-- ... --> - HTML 주석
+#
+# resolved된 코멘트는 자동으로 skip됩니다.
+# INCLUDE_RESOLVED=1 환경변수로 resolved 포함 가능 (측정/벤치마크용, measure_multi.py가 사용).
+#
+# 출력 필드:
+# - id, path, line, body, created_at: 기존 필드 (measure_multi.py 호환 — line은 null이면 0)
+# - thread_id: 리뷰 스레드 GraphQL node ID (수정 완료 후 스레드 resolve 처리용)
+# - is_outdated: 코드 변경으로 스레드가 outdated 되었는지 여부
+# - original_line, start_line: outdated/멀티라인 코멘트의 원 위치 (없으면 null)
+# - reply_count: 루트 코멘트 이후 답글 수 (이미 반박/답변한 스레드 구분용)
+# - last_reply_author: 마지막 답글 작성자 login (답글 없으면 null)
+
+set -euo pipefail
+
+# 의존성 확인
+for cmd in gh jq perl; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: required command '${cmd}' not found in PATH" >&2
+    exit 1
+  fi
+done
+
+PR_NUMBER="${1:?Error: PR number is required}"
+REPO="${2:-$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')}"
+
+if [[ -z "$REPO" ]]; then
+  echo "Error: Could not determine repository. Please provide as second argument." >&2
+  exit 1
+fi
+
+# owner/repo 분리
+OWNER=$(echo "$REPO" | cut -d'/' -f1)
+REPO_NAME=$(echo "$REPO" | cut -d'/' -f2)
+
+# INCLUDE_RESOLVED 정규화 (1이 아니면 모두 0)
+if [[ "${INCLUDE_RESOLVED:-0}" == "1" ]]; then
+  INCLUDE_RESOLVED=1
+else
+  INCLUDE_RESOLVED=0
+fi
+
+# PR 상태 확인 — PR이 없거나 접근 불가면 즉시 실패
+# (gh 버전에 따라 --json merged 필드가 없으므로 state/mergedAt 사용)
+if ! PR_STATE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json state,mergedAt 2>&1); then
+  echo "Error: Could not fetch PR #${PR_NUMBER} from ${REPO}: ${PR_STATE}" >&2
+  exit 1
+fi
+STATE=$(echo "$PR_STATE" | jq -r '.state')
+MERGED_AT=$(echo "$PR_STATE" | jq -r '.mergedAt // empty')
+
+if [[ "$STATE" == "MERGED" ]] || [[ -n "$MERGED_AT" ]]; then
+  echo "⚠️  Warning: PR #${PR_NUMBER} is MERGED. Comments can be analyzed but rebuttals cannot be posted." >&2
+elif [[ "$STATE" == "CLOSED" ]]; then
+  echo "⚠️  Warning: PR #${PR_NUMBER} is CLOSED. Comments can be analyzed but rebuttals may not be meaningful." >&2
+fi
+
+# body 가공 함수 - 불필요한 섹션 제거
+process_body() {
+  local body="$1"
+  echo "$body" | \
+    # Analysis chain 섹션 제거 (멀티라인)
+    perl -0pe 's/<details>\s*<summary>🧩 Analysis chain<\/summary>.*?<\/details>//gs' | \
+    # Prompt for AI Agents 섹션 제거 (멀티라인)
+    perl -0pe 's/<details>\s*<summary>🤖 Prompt for AI Agents<\/summary>.*?<\/details>//gs' | \
+    # Committable suggestion 섹션 제거
+    perl -0pe 's/<!-- suggestion_start -->.*?<!-- suggestion_end -->//gs' | \
+    # HTML 주석 제거 (>를 포함하는 주석도 처리, 멀티라인 포함)
+    perl -0pe 's/<!--.*?-->//gs' | \
+    # 연속 빈 줄 정리
+    cat -s | \
+    # 앞뒤 공백 제거
+    sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+# GraphQL로 리뷰 스레드 조회 (isResolved/isOutdated + 페이지네이션)
+# rootComment: 스레드의 첫 코멘트 (분석 대상)
+# lastReply: 마지막 코멘트 작성자 (이미 답변한 스레드 구분용)
+GRAPHQL_QUERY='
+query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $pr) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          line
+          originalLine
+          startLine
+          rootComment: comments(first: 1) {
+            totalCount
+            nodes {
+              databaseId
+              body
+              path
+              line
+              createdAt
+              author {
+                login
+              }
+            }
+          }
+          lastReply: comments(last: 1) {
+            nodes {
+              author {
+                login
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+
+run_graphql() {
+  gh api graphql \
+    -f query="$GRAPHQL_QUERY" \
+    -F owner="$OWNER" \
+    -F repo="$REPO_NAME" \
+    -F pr="$PR_NUMBER" \
+    "$@" 2>&1
+}
+
+# 페이지네이션 루프 — 100개 초과 스레드도 모두 수집
+ALL_NODES='[]'
+CURSOR=''
+while :; do
+  if [[ -n "$CURSOR" ]]; then
+    if ! RAW_RESPONSE=$(run_graphql -f cursor="$CURSOR"); then
+      echo "Error: GraphQL query failed for PR #${PR_NUMBER}: ${RAW_RESPONSE}" >&2
+      exit 1
+    fi
+  else
+    if ! RAW_RESPONSE=$(run_graphql); then
+      echo "Error: GraphQL query failed for PR #${PR_NUMBER}: ${RAW_RESPONSE}" >&2
+      exit 1
+    fi
+  fi
+
+  THREADS=$(echo "$RAW_RESPONSE" | jq '.data.repository.pullRequest.reviewThreads // empty')
+  if [[ -z "$THREADS" ]]; then
+    echo "Error: Unexpected GraphQL response for PR #${PR_NUMBER}: ${RAW_RESPONSE}" >&2
+    exit 1
+  fi
+
+  PAGE_NODES=$(echo "$THREADS" | jq '.nodes // []')
+  ALL_NODES=$(jq -n --argjson a "$ALL_NODES" --argjson b "$PAGE_NODES" '$a + $b')
+
+  HAS_NEXT=$(echo "$THREADS" | jq -r '.pageInfo.hasNextPage')
+  if [[ "$HAS_NEXT" != "true" ]]; then
+    break
+  fi
+  CURSOR=$(echo "$THREADS" | jq -r '.pageInfo.endCursor')
+done
+
+# CodeRabbit 코멘트 필터링
+# 기본: resolved가 아닌 것만 (실 사용)
+# INCLUDE_RESOLVED=1: 측정/벤치마크용으로 resolved 포함
+# 작성자 매칭은 REST의 "coderabbitai[bot]" 표기와도 호환되도록 startswith 사용
+RAW_COMMENTS=$(echo "$ALL_NODES" | jq --argjson includeResolved "$INCLUDE_RESOLVED" '[
+  .[]
+  | select($includeResolved == 1 or .isResolved == false)
+  | . as $thread
+  | .rootComment.nodes[0]
+  | select(. != null)
+  | select(.author != null and (.author.login | startswith("coderabbitai")))
+  | {
+      id: .databaseId,
+      path: .path,
+      line: (.line // 0),
+      body: .body,
+      created_at: .createdAt,
+      thread_id: $thread.id,
+      is_outdated: $thread.isOutdated,
+      original_line: $thread.originalLine,
+      start_line: $thread.startLine,
+      reply_count: ($thread.rootComment.totalCount - 1),
+      last_reply_author: (
+        if $thread.rootComment.totalCount > 1
+        then $thread.lastReply.nodes[0].author.login
+        else null
+        end
+      )
+    }
+]')
+
+# resolved된 코멘트 수 계산 (정보 출력용)
+RESOLVED_COUNT=$(echo "$ALL_NODES" | jq '[
+  .[]
+  | select(.isResolved == true)
+  | .rootComment.nodes[0]
+  | select(. != null)
+  | select(.author != null and (.author.login | startswith("coderabbitai")))
+] | length')
+
+TOTAL_COUNT=$(echo "$ALL_NODES" | jq '[
+  .[]
+  | .rootComment.nodes[0]
+  | select(. != null)
+  | select(.author != null and (.author.login | startswith("coderabbitai")))
+] | length')
+
+if [[ "$RESOLVED_COUNT" -gt 0 ]]; then
+  echo "ℹ️  Skipped ${RESOLVED_COUNT}/${TOTAL_COUNT} resolved comments" >&2
+fi
+
+# 코멘트가 없으면 빈 배열 출력
+if [[ "$RAW_COMMENTS" == "[]" ]] || [[ "$RAW_COMMENTS" == "null" ]]; then
+  echo "[]"
+  exit 0
+fi
+
+# 각 코멘트의 body 가공 (그 외 필드는 그대로 유지)
+PROCESSED_COMMENTS=$(echo "$RAW_COMMENTS" | jq -c '.[]' | while read -r comment; do
+  body=$(echo "$comment" | jq -r '.body')
+  processed_body=$(process_body "$body")
+  echo "$comment" | jq --arg body "$processed_body" '.body = $body'
+done | jq -s '.')
+
+echo "$PROCESSED_COMMENTS"
