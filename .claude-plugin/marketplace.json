@@ -37,6 +37,21 @@
       "category": "productivity",
       "keywords": ["code-review", "coderabbit", "pr", "github", "skill"],
       "source": "./plugins/code-review"
+    },
+    {
+      "name": "git-workflow",
+      "description": "Jira 티켓에서 시작하는 architect → developer ↔ reviewer 개발 파이프라인. 티어 판정, 계획·구현·검토 루프, 커밋·PR, Jira 상태 전환 규칙과 에이전트를 제공합니다.",
+      "author": {
+        "name": "Jiho Seo",
+        "email": "camomile.kr@gmail.com",
+        "url": "https://github.com/camomilekr"
+      },
+      "homepage": "https://github.com/camomilekr/claude-code-plugins/tree/main/plugins/git-workflow",
+      "repository": "https://github.com/camomilekr/claude-code-plugins",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["git", "workflow", "rules"],
+      "source": "./plugins/git-workflow"
     }
   ]
 }

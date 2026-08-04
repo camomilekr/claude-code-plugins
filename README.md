@@ -16,10 +16,12 @@ claude plugin marketplace add camomilekr/claude-code-plugins
 |---|---|---|
 | `ide-notify` | Claude Code가 작업을 마치거나, 서브에이전트가 작업을 시작·완료했거나, 승인·결정을 기다릴 때 시스템 알림. macOS에서는 알림 클릭 시 세션을 띄운 터미널/IDE로 포커스 이동 | [plugins/ide-notify](plugins/ide-notify) |
 | `code-review-plugins` | 코드 리뷰 자동화 스킬 모음. CodeRabbit PR 리뷰 코멘트를 분석해 처리하는 `resolve-coderabbit-review` 스킬 제공 | [plugins/code-review](plugins/code-review) |
+| `git-workflow` | Jira 티켓에서 시작하는 `architect` → `developer` ↔ `reviewer` 개발 파이프라인. 티어 판정·리뷰 루프·커밋·PR·Jira 상태 전환 규칙과 에이전트 제공 | [plugins/git-workflow](plugins/git-workflow) |
 
 ```bash
 claude plugin install ide-notify@camomilekr
 claude plugin install code-review-plugins@camomilekr
+claude plugin install git-workflow@camomilekr
 ```
 
 ## 구조
