@@ -25,6 +25,24 @@
         "source": "github",
         "repo": "camomilekr/claude-code-ide-notify"
       }
+    },
+    {
+      "name": "code-review-plugins",
+      "description": "코드 리뷰 자동화 스킬 모음. CodeRabbit PR 리뷰 코멘트를 분석하고 적절성을 판단하여 코드 수정 또는 반박 댓글 작성을 수행하는 code-review-coderabbit 스킬을 제공합니다.",
+      "author": {
+        "name": "Jiho Seo",
+        "email": "camomile.kr@gmail.com",
+        "url": "https://github.com/camomilekr"
+      },
+      "homepage": "https://github.com/camomilekr/code-review-plugins",
+      "repository": "https://github.com/camomilekr/code-review-plugins",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["code-review", "coderabbit", "pr", "github", "skill"],
+      "source": {
+        "source": "github",
+        "repo": "camomilekr/code-review-plugins"
+      }
     }
   ]
 }
