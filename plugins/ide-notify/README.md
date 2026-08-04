@@ -20,14 +20,23 @@ claude plugin install ide-notify@camomilekr
 
 ## 동작
 
-| 이벤트 | 시점 |
-|---|---|
-| `Stop` | Claude가 모든 작업을 마쳤을 때 |
-| `SubagentStart` | 서브에이전트 하나가 작업을 시작했을 때 (알림에 에이전트 이름 표시) |
-| `SubagentStop` | 서브에이전트 하나가 작업을 마쳤을 때 (알림에 에이전트 이름 표시) |
-| `Notification` | 승인 요청 / 결정 대기 / 입력 대기 (`permission_prompt`, `elicitation_dialog`, `agent_needs_input`) |
+| 이벤트 | 시점 | 알림 문구 |
+|---|---|---|
+| `Stop` | Claude가 모든 작업을 마쳤을 때 | **마지막 응답의 요약** (아래 참고) |
+| `SubagentStart` | 서브에이전트 하나가 작업을 시작했을 때 | 에이전트 이름 + 시작 문구 |
+| `SubagentStop` | 서브에이전트 하나가 작업을 마쳤을 때 | 에이전트 이름 + **작업 결과 요약** |
+| `Notification` | 승인 요청 / 결정 대기 / 입력 대기 (`permission_prompt`, `elicitation_dialog`, `agent_needs_input`) | Claude Code가 보낸 메시지 |
 
 네 훅 모두 `async`라 알림 발송이 세션을 붙잡지 않습니다.
+
+### 작업 결과 요약 문구
+
+`Stop`/`SubagentStop` 알림은 고정 문구 대신 **트랜스크립트의 마지막 assistant 텍스트**를 요약으로 보여줍니다.
+
+- `Stop` — 세션 트랜스크립트에서 메인 체인(서브에이전트 제외)의 마지막 응답
+- `SubagentStop` — 해당 에이전트의 트랜스크립트(`subagents/agent-<id>.jsonl`)의 마지막 응답. 페이로드의 `agent_transcript_path` → `agent_id` 매칭 → 최근 수정 파일 순으로 찾습니다
+
+마크다운 장식(백틱·별표·헤딩)을 걷어내고 160자로 자릅니다. 트랜스크립트를 읽을 수 없거나 `jq`가 없으면 기존 기본 문구("작업을 모두 마쳤습니다." 등)로 폴백합니다. 대형 트랜스크립트 대비 파일 꼬리 1MB만 읽으므로 발송 지연은 없습니다.
 
 ### 서브에이전트 알림 줄이기
 
@@ -61,10 +70,10 @@ macOS 알림은 **클릭 대상을 지정할 수 없고**, "알림을 보낸 앱
 수동 빌드:
 
 ```bash
-bash ~/.claude/plugins/cache/camomilekr/ide-notify/1.0.1/scripts/build-notifier.sh
+bash ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.0/scripts/build-notifier.sh
 ```
 
-경로의 `camomilekr`는 마켓플레이스 이름, `1.0.1`은 플러그인 버전이라 환경에 따라 다릅니다. 확인하려면:
+경로의 `camomilekr`는 마켓플레이스 이름, `1.1.0`은 플러그인 버전이라 환경에 따라 다릅니다. 확인하려면:
 
 ```bash
 ls -d ~/.claude/plugins/cache/*/ide-notify/*/
@@ -86,6 +95,7 @@ ls -d ~/.claude/plugins/cache/*/ide-notify/*/
 | `CLAUDE_NOTIFIER_APP` | 전용 알림 앱 경로 재정의 |
 | `CLAUDE_NOTIFY_DEBUG=1` | 진단 로그를 `~/.claude/ide-notify/notifier.log`에 기록 |
 | `CLAUDE_NOTIFY_NO_BUILD=1` | 전용 앱 자동 빌드를 끄고 `osascript`만 사용 |
+| `CLAUDE_NOTIFY_DRY_RUN=1` | 알림을 띄우지 않고 문구만 stdout으로 출력 (문구 확인용) |
 
 호스트 앱 번들 ID는 4단계로 감지합니다: `CLAUDE_NOTIFY_BUNDLE_ID` → `__CFBundleIdentifier` → 프로세스 조상의 `.app` 번들 → `TERM_PROGRAM` 매핑.
 
@@ -95,7 +105,7 @@ ls -d ~/.claude/plugins/cache/*/ide-notify/*/
 
 ```bash
 echo '{"message":"test"}' | CLAUDE_NOTIFY_DEBUG=1 \
-  ~/.claude/plugins/cache/camomilekr/ide-notify/1.0.1/scripts/notify.sh input
+  ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.0/scripts/notify.sh input
 cat ~/.claude/ide-notify/notifier.log
 ```
 

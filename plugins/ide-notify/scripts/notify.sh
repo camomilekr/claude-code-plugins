@@ -11,6 +11,13 @@
 #   Notification 이벤트는 .message 에 알림 문구가 담겨 있다.
 #   SubagentStart/Stop 이벤트는 .agent_type 에 에이전트 이름이 담겨 있다.
 #
+# stop / subagent-stop 알림 문구
+#   하드코딩 문구 대신 트랜스크립트(JSONL)에서 마지막 assistant 텍스트를
+#   뽑아 작업 결과 요약으로 보여준다.
+#   - stop: .transcript_path 의 메인 체인(isSidechain != true) 마지막 텍스트
+#   - subagent-stop: <트랜스크립트>/subagents/agent-<id>.jsonl 의 마지막 텍스트
+#   추출에 실패하면 기존 기본 문구로 폴백한다. (jq 필요)
+#
 # 지원 플랫폼: macOS(전용 앱 또는 osascript), Linux(notify-send),
 #              WSL·Windows(PowerShell), 그 외에는 터미널 벨로 폴백한다.
 #
@@ -30,6 +37,7 @@
 #   CLAUDE_NOTIFIER_APP      전용 알림 앱 경로 재정의 (macOS)
 #   CLAUDE_NOTIFY_DEBUG=1    진단 로그를 ~/.claude/ide-notify/notifier.log 에 기록
 #   CLAUDE_NOTIFY_NO_BUILD=1 전용 앱 자동 빌드를 끈다
+#   CLAUDE_NOTIFY_DRY_RUN=1  알림을 띄우지 않고 문구만 stdout 으로 출력 (진단용)
 
 set -uo pipefail
 
@@ -43,18 +51,94 @@ STATE_DIR="$HOME/.claude/ide-notify"
 # --- 페이로드에서 알림 문구 추출 (jq 가 없거나 실패해도 진행) ---
 msg=""
 agent=""
+tpath=""
+agent_tpath=""
+agent_id=""
 if [[ -n "$payload" ]] && command -v jq >/dev/null 2>&1; then
   msg=$(printf '%s' "$payload" | jq -r '.message // empty' 2>/dev/null) || msg=""
   agent=$(printf '%s' "$payload" | jq -r '.agent_type // empty' 2>/dev/null) || agent=""
+  tpath=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null) || tpath=""
+  agent_tpath=$(printf '%s' "$payload" | jq -r '.agent_transcript_path // empty' 2>/dev/null) || agent_tpath=""
+  agent_id=$(printf '%s' "$payload" | jq -r '.agent_id // empty' 2>/dev/null) || agent_id=""
 fi
 
-# SubagentStart/Stop 에는 .message 가 없으므로 에이전트 이름으로 문구를 만든다.
+# --- 트랜스크립트에서 마지막 assistant 텍스트를 요약 문구로 추출 ---
+# $1: 트랜스크립트 경로, $2: 1 이면 사이드체인(서브에이전트) 항목도 포함
+# 대형 트랜스크립트 대비 파일 꼬리 1MB 만 읽는다. 잘린 첫 줄은 fromjson? 이
+# 조용히 버린다. 마크다운 장식(백틱·별표·헤딩)을 걷어내고 160자로 자른다.
+summarize_transcript() {
+  local path=$1 include_sidechain=${2:-0} out
+  [[ -n "$path" && -r "$path" ]] || return 1
+  command -v jq >/dev/null 2>&1 || return 1
+  out=$(tail -c 1048576 "$path" 2>/dev/null | jq -rRs --argjson sc "$include_sidechain" '
+    [ split("\n")[]
+      | fromjson?
+      | select(.type == "assistant")
+      | select($sc == 1 or .isSidechain != true)
+      | .message.content
+      | if type == "array"
+        then ([ .[] | select(.type? == "text") | .text ] | join(" "))
+        else tostring
+        end
+      | gsub("`+"; "")
+      | gsub("\\*+"; "")
+      | gsub("(^|\\n)#+ *"; " ")
+      | gsub("\\s+"; " ")
+      | sub("^ +"; "") | sub(" +$"; "")
+      | select(length > 0)
+    ] | last // empty
+    | if length > 160 then .[0:159] + "…" else . end
+  ' 2>/dev/null) || return 1
+  [[ -n "$out" ]] || return 1
+  printf '%s' "$out"
+}
+
+# --- subagent-stop: 방금 멈춘 에이전트의 트랜스크립트 경로를 찾는다 ---
+# 1) 페이로드의 agent_transcript_path
+# 2) <메인 트랜스크립트 디렉토리>/subagents/agent-<agent_id>.jsonl
+# 3) 같은 디렉토리에서 가장 최근에 수정된 agent-*.jsonl
+#    (SubagentStop 은 종료 직후 발화하므로 방금 멈춘 에이전트일 확률이 높다)
+find_agent_transcript() {
+  if [[ -n "$agent_tpath" && -r "$agent_tpath" ]]; then
+    printf '%s' "$agent_tpath"; return 0
+  fi
+  [[ -n "$tpath" ]] || return 1
+  local dir="${tpath%.jsonl}/subagents" latest
+  [[ -d "$dir" ]] || return 1
+  if [[ -n "$agent_id" && -r "$dir/agent-$agent_id.jsonl" ]]; then
+    printf '%s' "$dir/agent-$agent_id.jsonl"; return 0
+  fi
+  latest=$(ls -t "$dir"/agent-*.jsonl 2>/dev/null | head -1)
+  [[ -n "$latest" && -r "$latest" ]] || return 1
+  printf '%s' "$latest"
+}
+
+# 이벤트별 알림 문구. stop/subagent-stop 은 트랜스크립트 요약을 우선 사용하고
+# 실패 시 기본 문구로 폴백한다.
 # ("subagent" 는 subagent-stop 의 옛 이름으로, 구버전 hooks.json 호환용)
 case "$event" in
-  stop)                   [[ -n "$msg" ]] || msg="작업을 모두 마쳤습니다." ;;
-  subagent-start)         msg="${agent:+$agent }서브에이전트가 작업을 시작했습니다." ;;
-  subagent-stop|subagent) msg="${agent:+$agent }서브에이전트가 작업을 마쳤습니다." ;;
-  *)                      [[ -n "$msg" ]] || msg="확인이 필요합니다." ;;
+  stop)
+    if [[ -z "$msg" ]]; then
+      msg=$(summarize_transcript "$tpath" 0) || msg="작업을 모두 마쳤습니다."
+    fi
+    ;;
+  subagent-start)
+    msg="${agent:+$agent }서브에이전트가 작업을 시작했습니다."
+    ;;
+  subagent-stop|subagent)
+    summary=""
+    if agent_transcript=$(find_agent_transcript); then
+      summary=$(summarize_transcript "$agent_transcript" 1) || summary=""
+    fi
+    if [[ -n "$summary" ]]; then
+      msg="${agent:+$agent · }$summary"
+    else
+      msg="${agent:+$agent }서브에이전트가 작업을 마쳤습니다."
+    fi
+    ;;
+  *)
+    [[ -n "$msg" ]] || msg="확인이 필요합니다."
+    ;;
 esac
 
 project=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
@@ -64,6 +148,12 @@ project=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
 export NOTIFY_TITLE="Claude Code"
 export NOTIFY_SUBTITLE="$project"
 export NOTIFY_BODY="$msg"
+
+# 진단용: 알림을 띄우지 않고 문구만 출력한다.
+if [[ "${CLAUDE_NOTIFY_DRY_RUN:-}" == "1" ]]; then
+  printf '%s | %s | %s\n' "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$NOTIFY_BODY"
+  exit 0
+fi
 
 # --- macOS: 이 세션을 띄운 앱(터미널/IDE)의 번들 ID 를 찾는다 ---
 detect_bundle_id() {
