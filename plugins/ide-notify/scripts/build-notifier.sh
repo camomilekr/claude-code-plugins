@@ -57,6 +57,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key>           <string>1</string>
   <key>LSUIElement</key>               <true/>
   <key>LSMinimumSystemVersion</key>    <string>11.0</string>
+  <!-- 알림 기본 스타일을 '알림(Alert)'으로 요청한다. 배너와 달리 사용자가
+       닫거나 클릭할 때까지 화면에 남는다. 최초 권한 허용 시점의 기본값일
+       뿐이며, 이미 등록된 앱은 시스템 설정 > 알림에서 직접 바꿔야 한다. -->
+  <key>NSUserNotificationAlertStyle</key><string>alert</string>
 </dict>
 </plist>
 PLIST

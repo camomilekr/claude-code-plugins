@@ -70,10 +70,10 @@ macOS 알림은 **클릭 대상을 지정할 수 없고**, "알림을 보낸 앱
 수동 빌드:
 
 ```bash
-bash ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.0/scripts/build-notifier.sh
+bash ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.1/scripts/build-notifier.sh
 ```
 
-경로의 `camomilekr`는 마켓플레이스 이름, `1.1.0`은 플러그인 버전이라 환경에 따라 다릅니다. 확인하려면:
+경로의 `camomilekr`는 마켓플레이스 이름, `1.1.1`은 플러그인 버전이라 환경에 따라 다릅니다. 확인하려면:
 
 ```bash
 ls -d ~/.claude/plugins/cache/*/ide-notify/*/
@@ -105,7 +105,7 @@ ls -d ~/.claude/plugins/cache/*/ide-notify/*/
 
 ```bash
 echo '{"message":"test"}' | CLAUDE_NOTIFY_DEBUG=1 \
-  ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.0/scripts/notify.sh input
+  ~/.claude/plugins/cache/camomilekr/ide-notify/1.1.1/scripts/notify.sh input
 cat ~/.claude/ide-notify/notifier.log
 ```
 
@@ -114,6 +114,8 @@ cat ~/.claude/ide-notify/notifier.log
 **클릭해도 스크립트 편집기가 열린다** — 전용 앱 빌드에 실패해 `osascript`로 폴백 중입니다. `~/.claude/ide-notify/.build-failed` 스탬프를 지우고 `build-notifier.sh`를 직접 실행해 에러를 확인하세요.
 
 **알림 권한이 거부됐다** — 시스템 설정 → 알림 → `Claude Code`에서 허용하세요. 앱을 재빌드하면 ad-hoc 서명이 바뀌어 권한을 다시 물어볼 수 있습니다.
+
+**알림이 너무 빨리 사라진다** — 배너가 떠 있는 시간은 macOS가 정하며 앱이 늘릴 수 없습니다. 시스템 설정 → 알림 → `Claude Code` → 알림 스타일을 **배너 → 알림(Alerts)**으로 바꾸면 닫거나 클릭할 때까지 화면에 남습니다. 앱의 Info.plist가 기본 스타일로 alert를 요청하지만(`NSUserNotificationAlertStyle`), 이는 최초 권한 허용 시점에만 적용되므로 이미 설치된 경우 시스템 설정에서 직접 바꿔야 합니다.
 
 ## 구조
 
