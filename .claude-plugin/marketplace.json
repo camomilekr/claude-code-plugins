@@ -25,7 +25,7 @@
     },
     {
       "name": "code-review-plugins",
-      "description": "코드 리뷰 자동화 스킬 모음. CodeRabbit PR 리뷰 코멘트를 분석해 타당한 지적은 코드 수정 후 수정 내용 댓글을, 부적절한 지적은 반박 댓글을 작성하는 resolve-coderabbit-review 스킬을 제공합니다.",
+      "description": "코드 리뷰 대응 자동화 스킬 모음. 사람 리뷰어와 CodeRabbit·Copilot 같은 자동 리뷰를 가리지 않고 PR 리뷰 코멘트를 코드로 검증해 타당한 지적은 수정 후 수정 내용 답글을, 부적절한 지적은 근거를 들어 반박 답글을 작성하는 response-to-review 스킬을 제공합니다.",
       "author": {
         "name": "Jiho Seo",
         "email": "camomile.kr@gmail.com",
@@ -35,7 +35,7 @@
       "repository": "https://github.com/camomilekr/claude-code-plugins",
       "license": "MIT",
       "category": "productivity",
-      "keywords": ["code-review", "coderabbit", "pr", "github", "skill"],
+      "keywords": ["code-review", "review-response", "coderabbit", "copilot", "pr", "github", "skill"],
       "source": "./plugins/code-review"
     },
     {

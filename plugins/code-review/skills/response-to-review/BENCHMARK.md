@@ -1,8 +1,10 @@
-# resolve-coderabbit-review 스킬 토큰 비용 벤치마크
+# response-to-review 스킬 토큰 비용 벤치마크
+
+> 이 측정은 스킬이 `resolve-coderabbit-review`라는 이름으로 CodeRabbit 전용이던 시절에 수행됐다. 측정 대상인 "파일 단위 Subagent 그룹핑" 로직은 통합된 `response-to-review` 스킬에 그대로 남아 있으므로 결론은 유효하다.
 
 ## 요약
 
-resolve-coderabbit-review 스킬의 Subagent 처리 방식을 **코멘트 단위 → 파일 단위 (그룹 코멘트 수 ≥ 2일 때만 그룹핑)** 으로 변경하여, 실 사용 패턴(라운드 단위 호출) 기준 토큰 사용량을 **22.3% 절약**했다 (최근 1,000 PR 합산 기준).
+response-to-review 스킬(구 resolve-coderabbit-review)의 Subagent 처리 방식을 **코멘트 단위 → 파일 단위 (그룹 코멘트 수 ≥ 2일 때만 그룹핑)** 으로 변경하여, 실 사용 패턴(라운드 단위 호출) 기준 토큰 사용량을 **22.3% 절약**했다 (최근 1,000 PR 합산 기준).
 
 - **손해 PR 0건** — 그룹 코멘트 수 = 1인 경우 단일 코멘트 프롬프트로 폴백하여 오버헤드 제거
 - 큰 PR에서 효과 큼: 절약 토큰 최대 **+87,065 (PR #5743, 60.1%)**, 절약률 최대 **+71.4% (PR #6453)**
@@ -23,7 +25,7 @@ resolve-coderabbit-review 스킬의 Subagent 처리 방식을 **코멘트 단위
 
 ## 1. 배경
 
-### resolve-coderabbit-review 스킬이란
+### 이 스킬이란 (측정 당시: resolve-coderabbit-review)
 
 PR에 달린 CodeRabbit 리뷰 코멘트를 자동으로 분석하고, 적절성을 판단하는 스킬이다. 각 코멘트에 대해 해당 파일의 코드를 읽고 지적 내용과 비교한 뒤, 수정이 필요한지 아니면 반박 응답이 필요한지를 분류한다.
 
@@ -341,7 +343,7 @@ CodeRabbit 리뷰는 PR 생애에 걸쳐 여러 번 게시된다:
 
 ### 커밋 참조
 
-> **참고**: 아래 커밋 메시지와 경로는 측정 당시의 것으로, 스킬 이름이 `review-coderabbit`이고 스킬이 whatap-front 저장소의 `.claude/skills/` 아래에 있던 시점 기준이다. 현재 이름은 `resolve-coderabbit-review`이며 별도 플러그인 저장소에 있다.
+> **참고**: 아래 커밋 메시지와 경로는 측정 당시의 것으로, 스킬 이름이 `review-coderabbit`이고 스킬이 whatap-front 저장소의 `.claude/skills/` 아래에 있던 시점 기준이다. 현재는 `response-to-review`로 통합되어 별도 플러그인 저장소에 있다.
 >
 > 또한 측정 이후 WORKFLOW.md의 분석 프롬프트에 `is_outdated`·`original_line`·재지적 컨텍스트 필드가 추가되었다. 코멘트당 수십 토큰 수준의 증가이며, 구/신 양쪽에 동일하게 적용되므로 **상대 비교 결론(그룹핑 절약률)에는 영향이 없다.**
 
@@ -359,16 +361,16 @@ CodeRabbit 리뷰는 PR 생애에 걸쳐 여러 번 게시된다:
 pip install tiktoken
 
 # 1. 15 PR 측정 (3장 결과 재현)
-python3 plugins/code-review/skills/resolve-coderabbit-review/scripts/measure_multi.py \
+python3 plugins/code-review/skills/response-to-review/scripts/measure_multi.py \
   6569 6527 6483 6453 6433 6490 6486 5810 6455 6493 \
   6020 6425 6283 6472 6454
 
 # 2. 1,000 PR 측정 (4장 결과 재현)
 gh pr list -L 1000 --state all --json number --jq '.[].number' > pr_list.txt
-python3 plugins/code-review/skills/resolve-coderabbit-review/scripts/measure_multi.py --file pr_list.txt -o results.json
+python3 plugins/code-review/skills/response-to-review/scripts/measure_multi.py --file pr_list.txt -o results.json
 
 # 3. 윈도우 변경 시 -w 옵션 (단위: 초)
-python3 plugins/code-review/skills/resolve-coderabbit-review/scripts/measure_multi.py 6020 -w 600
+python3 plugins/code-review/skills/response-to-review/scripts/measure_multi.py 6020 -w 600
 ```
 
 > **시점 의존성**: `gh api graphql`로 가져오는 코멘트는 측정 시점의 `outdated`/`resolved` 상태에 따라 달라진다. 첫 측정 이후 강제 푸시로 outdated 처리된 코멘트는 누락될 수 있어, 재측정 시 동일한 절약 토큰 수치를 정확히 재현하지 못할 수 있다. 절약률(%)은 모집단 변동에 비교적 안정적이다.
