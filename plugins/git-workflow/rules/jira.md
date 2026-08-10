@@ -13,7 +13,7 @@
 
 ## 요약 검토 게이트 (티어 2 필수)
 
-`architect`가 계획서와 함께 남긴 요구사항 스냅샷(`docs/plan/{YYYY-MM-DD}-{KEY}-jira-summary.md`)을 화면에 출력하고 `AskUserQuestion`으로 확인받는다. 요약이 어긋난 채 그 위에 쌓는 계획·코드·PR은 모두 어긋난다.
+`architect`가 계획서와 함께 남긴 요구사항 스냅샷(`docs/plan/{YYYY-MM-DD}-{KEY}-summary.md`)을 화면에 출력하고 `AskUserQuestion`으로 확인받는다. 요약이 어긋난 채 그 위에 쌓는 계획·코드·PR은 모두 어긋난다.
 
 - **A. 요약 OK — 진행 + Jira 상태 IN PROGRESS 전환** (Recommended. 이미 진행 중 이후 상태면 전환은 자동 skip)
 - **B. 수정 필요** — 어긋난 부분을 받아 `architect`에게 `SendMessage`로 돌려보낸 뒤 다시 게이트로
