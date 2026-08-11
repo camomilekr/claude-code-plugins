@@ -96,8 +96,33 @@ ls -d ~/.claude/plugins/cache/*/ide-notify/*/
 | `CLAUDE_NOTIFY_DEBUG=1` | 진단 로그를 `~/.claude/ide-notify/notifier.log`에 기록 |
 | `CLAUDE_NOTIFY_NO_BUILD=1` | 전용 앱 자동 빌드를 끄고 `osascript`만 사용 |
 | `CLAUDE_NOTIFY_DRY_RUN=1` | 알림을 띄우지 않고 문구만 stdout으로 출력 (문구 확인용) |
+| `CLAUDE_NOTIFY_SOUND` | 모든 이벤트의 기본 효과음 (아래 참고) |
+| `CLAUDE_NOTIFY_SOUND_STOP` | `stop` 이벤트 전용 효과음. 전역보다 우선 |
+| `CLAUDE_NOTIFY_SOUND_INPUT` | `input` 이벤트 전용 효과음. 전역보다 우선 |
+| `CLAUDE_NOTIFY_SOUND_SUBAGENT_START` | `subagent-start` 이벤트 전용 효과음 |
+| `CLAUDE_NOTIFY_SOUND_SUBAGENT_STOP` | `subagent-stop` 이벤트 전용 효과음 |
 
 호스트 앱 번들 ID는 4단계로 감지합니다: `CLAUDE_NOTIFY_BUNDLE_ID` → `__CFBundleIdentifier` → 프로세스 조상의 `.app` 번들 → `TERM_PROGRAM` 매핑.
+
+### 효과음 바꾸기 (macOS)
+
+효과음 변수에 쓸 수 있는 값은 셋입니다.
+
+- **사운드 이름** — 시스템 사운드(`/System/Library/Sounds`의 Basso, Blow, Bottle, Frog, Funk, Glass, Hero, Morse, Ping, Pop, Purr, Sosumi, Submarine, Tink)나 `~/Library/Sounds`에 넣은 사용자 사운드 파일의 이름. 확장자는 생략해도 됩니다 (`Glass`, `my-sound`, `my-sound.wav` 모두 가능)
+- **`none`** — 무음 (`silent`, `off`도 같음)
+- **비워 두거나 `default`** — 시스템 기본 알림음
+
+사용자 사운드 파일은 `~/Library/Sounds`에 넣으면 됩니다. macOS 알림음 제약에 따라 **aiff/wav/caf 포맷, 30초 이하**여야 합니다. 그보다 길거나 다른 포맷이면 소리가 나지 않거나 기본음으로 대체됩니다.
+
+이벤트별로 다르게 지정하는 예 — 셸 프로필(`~/.zshrc` 등)이나 Claude Code `settings.json`의 `env` 블록에 넣습니다.
+
+```bash
+export CLAUDE_NOTIFY_SOUND_STOP="Glass"        # 작업 완료
+export CLAUDE_NOTIFY_SOUND_INPUT="Hero"        # 승인·결정 대기
+export CLAUDE_NOTIFY_SOUND_SUBAGENT_START="none"   # 서브에이전트 시작은 무음
+```
+
+전용 알림 앱은 플러그인 업데이트로 Swift 소스가 갱신되면 다음 알림 때 자동으로 재빌드되므로 별도 조치가 필요 없습니다. `osascript` 폴백 경로에서도 같은 변수로 동작하되, 무음(`none`)과 확장자 없는 이름 지정만 지원합니다.
 
 ## 문제 해결
 

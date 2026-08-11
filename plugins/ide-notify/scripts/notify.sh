@@ -38,6 +38,18 @@
 #   CLAUDE_NOTIFY_DEBUG=1    진단 로그를 ~/.claude/ide-notify/notifier.log 에 기록
 #   CLAUDE_NOTIFY_NO_BUILD=1 전용 앱 자동 빌드를 끈다
 #   CLAUDE_NOTIFY_DRY_RUN=1  알림을 띄우지 않고 문구만 stdout 으로 출력 (진단용)
+#
+# 효과음 환경변수 (macOS)
+#   CLAUDE_NOTIFY_SOUND                 모든 이벤트의 기본 효과음
+#   CLAUDE_NOTIFY_SOUND_STOP            stop 이벤트 전용 (전역보다 우선)
+#   CLAUDE_NOTIFY_SOUND_INPUT           input 이벤트 전용 (전역보다 우선)
+#   CLAUDE_NOTIFY_SOUND_SUBAGENT_START  subagent-start 이벤트 전용
+#   CLAUDE_NOTIFY_SOUND_SUBAGENT_STOP   subagent-stop 이벤트 전용
+#
+#   값: 사운드 이름 — 시스템 사운드(Ping, Glass, Hero, Submarine 등
+#       /System/Library/Sounds 의 파일명)나 ~/Library/Sounds 에 넣은
+#       사용자 사운드 파일 이름(확장자 생략 가능. aiff/wav/caf 지원).
+#       "none" 은 무음, 비워 두면 시스템 기본음.
 
 set -uo pipefail
 
@@ -121,9 +133,11 @@ case "$event" in
     if [[ -z "$msg" ]]; then
       msg=$(summarize_transcript "$tpath" 0) || msg="작업을 모두 마쳤습니다."
     fi
+    sound="${CLAUDE_NOTIFY_SOUND_STOP:-}"
     ;;
   subagent-start)
     msg="${agent:+$agent }서브에이전트가 작업을 시작했습니다."
+    sound="${CLAUDE_NOTIFY_SOUND_SUBAGENT_START:-}"
     ;;
   subagent-stop|subagent)
     summary=""
@@ -135,11 +149,16 @@ case "$event" in
     else
       msg="${agent:+$agent }서브에이전트가 작업을 마쳤습니다."
     fi
+    sound="${CLAUDE_NOTIFY_SOUND_SUBAGENT_STOP:-}"
     ;;
   *)
     [[ -n "$msg" ]] || msg="확인이 필요합니다."
+    sound="${CLAUDE_NOTIFY_SOUND_INPUT:-}"
     ;;
 esac
+
+# 이벤트 전용 변수가 없으면 전역 기본값으로, 그것도 없으면 시스템 기본음으로
+sound="${sound:-${CLAUDE_NOTIFY_SOUND:-}}"
 
 project=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
 
@@ -148,10 +167,12 @@ project=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
 export NOTIFY_TITLE="Claude Code"
 export NOTIFY_SUBTITLE="$project"
 export NOTIFY_BODY="$msg"
+export NOTIFY_SOUND="$sound"
 
 # 진단용: 알림을 띄우지 않고 문구만 출력한다.
 if [[ "${CLAUDE_NOTIFY_DRY_RUN:-}" == "1" ]]; then
-  printf '%s | %s | %s\n' "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$NOTIFY_BODY"
+  printf '%s | %s | %s | sound=%s\n' \
+    "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$NOTIFY_BODY" "${NOTIFY_SOUND:-default}"
   exit 0
 fi
 
@@ -187,21 +208,42 @@ detect_bundle_id() {
   esac
 }
 
-# --- macOS: 전용 알림 앱이 없으면 한 번만 빌드한다 ---
-# 실패 스탬프를 남겨 매 알림마다 빌드를 재시도하지 않는다.
+# --- macOS: 전용 알림 앱이 없거나 소스보다 오래됐으면 빌드한다 ---
+# 실패 스탬프를 남겨 매 알림마다 빌드를 재시도하지 않는다. 단 스탬프 이후에
+# 소스가 갱신됐으면(플러그인 업데이트) 한 번 다시 시도한다. 재빌드에
+# 실패해도 기존 앱이 있으면 그것을 계속 쓴다.
 ensure_notifier_app() {
   local app=$1
-  [[ -x "$app/Contents/MacOS/ClaudeCodeNotifier" ]] && return 0
-  [[ "${CLAUDE_NOTIFY_NO_BUILD:-}" == "1" ]] && return 1
-  [[ -f "$STATE_DIR/.build-failed" ]] && return 1
-  command -v swiftc >/dev/null 2>&1 || return 1
+  local bin="$app/Contents/MacOS/ClaudeCodeNotifier"
+  local src="$PLUGIN_ROOT/src/ClaudeCodeNotifier.swift"
+  local stamp="$STATE_DIR/.build-failed"
+
+  local need_build=1
+  if [[ -x "$bin" ]] && ! [[ -f "$src" && "$src" -nt "$bin" ]]; then
+    need_build=0    # 앱이 있고 소스가 더 새롭지 않다 — 그대로 쓴다
+  fi
+  if [[ $need_build -eq 0 ]]; then return 0; fi
+
+  # 빌드할 수 없는 조건이면, 낡았더라도 기존 앱이 있으면 그것으로 간다
+  if [[ "${CLAUDE_NOTIFY_NO_BUILD:-}" == "1" ]] \
+     || { [[ -f "$stamp" ]] && ! [[ -f "$src" && "$src" -nt "$stamp" ]]; } \
+     || ! command -v swiftc >/dev/null 2>&1; then
+    [[ -x "$bin" ]] && return 0
+    return 1
+  fi
+
   local builder="$PLUGIN_ROOT/scripts/build-notifier.sh"
-  [[ -x "$builder" ]] || return 1
-  mkdir -p "$STATE_DIR" 2>/dev/null || return 1
+  if [[ ! -x "$builder" ]]; then
+    [[ -x "$bin" ]] && return 0
+    return 1
+  fi
+  mkdir -p "$STATE_DIR" 2>/dev/null || { [[ -x "$bin" ]] && return 0; return 1; }
   if CLAUDE_NOTIFIER_APP="$app" "$builder" >/dev/null 2>&1; then
+    rm -f "$stamp" 2>/dev/null
     return 0
   fi
-  : > "$STATE_DIR/.build-failed"
+  : > "$stamp"
+  [[ -x "$bin" ]] && return 0
   return 1
 }
 
@@ -230,8 +272,10 @@ notify() {
       if ensure_notifier_app "$app"; then
         bid=$(detect_bundle_id 2>/dev/null) || bid=""
         # 앱은 발송 실패 시 종료 코드 1 을 반환하므로 조용히 실패하지 않는다.
+        # 5번째 인자가 효과음 지정이다 (빈 값이면 시스템 기본음).
         if "$app/Contents/MacOS/ClaudeCodeNotifier" \
-             "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$NOTIFY_BODY" "$bid" >/dev/null 2>&1; then
+             "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$NOTIFY_BODY" "$bid" "$NOTIFY_SOUND" \
+             >/dev/null 2>&1; then
           return 0
         fi
       fi
@@ -240,12 +284,28 @@ notify() {
       # AppleScript 문자열 보간 대신 argv 로 값을 넘겨 따옴표·백슬래시가
       # 포함된 문구도 안전하게 처리한다.
       # (system attribute 방식은 display notification 인자로 쓰면 -1700 으로 실패한다)
-      osascript \
-        -e 'on run argv' \
-        -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv) sound name "Ping"' \
-        -e 'end run' \
-        -- "$NOTIFY_BODY" "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" \
-        >/dev/null 2>&1 && return 0
+      # sound name 은 확장자 없는 이름을 받으므로 경로·확장자를 걷어낸다.
+      local osa_sound
+      case "$NOTIFY_SOUND" in
+        ""|default)         osa_sound="Ping" ;;
+        none|silent|off)    osa_sound="" ;;
+        *) osa_sound="${NOTIFY_SOUND##*/}"; osa_sound="${osa_sound%.*}" ;;
+      esac
+      if [[ -n "$osa_sound" ]]; then
+        osascript \
+          -e 'on run argv' \
+          -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv) sound name (item 4 of argv)' \
+          -e 'end run' \
+          -- "$NOTIFY_BODY" "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" "$osa_sound" \
+          >/dev/null 2>&1 && return 0
+      else
+        osascript \
+          -e 'on run argv' \
+          -e 'display notification (item 1 of argv) with title (item 2 of argv) subtitle (item 3 of argv)' \
+          -e 'end run' \
+          -- "$NOTIFY_BODY" "$NOTIFY_TITLE" "$NOTIFY_SUBTITLE" \
+          >/dev/null 2>&1 && return 0
+      fi
       ;;
     Linux)
       # WSL 이면 Windows 쪽 PowerShell 로 띄운다.

@@ -12,6 +12,37 @@ func logLine(_ s: String) {
     }
 }
 
+// 5번째 인자(소리 지정)를 UNNotificationSound 로 변환한다.
+//   ""/"default" → 시스템 기본음, "none"/"silent"/"off" → 무음,
+//   그 외 → 사운드 이름. 확장자가 없으면 사운드 검색 경로(~/Library/Sounds,
+//   /Library/Sounds, /System/Library/Sounds)에서 파일을 찾아 확장자를 붙인다.
+//   UNNotificationSound(named:)가 같은 경로를 탐색하지만 파일명(확장자 포함)을
+//   요구하기 때문이다. 못 찾으면 시스템 사운드 관례인 .aiff 로 가정한다.
+func resolveSound(_ spec: String) -> UNNotificationSound? {
+    switch spec {
+    case "", "default":
+        return .default
+    case "none", "silent", "off":
+        return nil
+    default:
+        break
+    }
+    var name = spec
+    if !name.contains(".") {
+        let dirs = [NSHomeDirectory() + "/Library/Sounds", "/Library/Sounds", "/System/Library/Sounds"]
+        let exts = ["aiff", "aif", "wav", "caf"]
+        search: for dir in dirs {
+            for ext in exts where FileManager.default.fileExists(atPath: "\(dir)/\(name).\(ext)") {
+                name = "\(name).\(ext)"
+                break search
+            }
+        }
+        if !name.contains(".") { name += ".aiff" }
+    }
+    logLine("sound spec=\(spec) resolved=\(name)")
+    return UNNotificationSound(named: UNNotificationSoundName(name))
+}
+
 final class Delegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var postArgs: [String]?
 
@@ -36,7 +67,7 @@ final class Delegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterD
             content.title = args[0]
             content.subtitle = args[1]
             content.body = args[2]
-            content.sound = .default
+            content.sound = resolveSound(args.count > 4 ? args[4] : "")
             if args.count > 3 { content.userInfo = ["target": args[3]] }
 
             let req = UNNotificationRequest(identifier: UUID().uuidString,
