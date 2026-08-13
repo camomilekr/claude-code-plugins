@@ -15,7 +15,7 @@ hooks/                     # SessionStart 훅 — rules/*.md 를 세션 컨텍�
 ├── hooks.json           #   (플러그인은 rules/ 자동 로드를 지원하지 않아 훅이 대신한다)
 └── inject-rules.sh
 rules/                     # 세션 시작 시 훅으로 주입되는 규칙 — 가볍게 유지
-├── core.md    # 파이프라인·티어·계획·루프·커밋·PR 규칙
+├── core.md    # 파이프라인·티어·계획·루프·검증·요청 수·커밋·PR 규칙
 └── jira.md    # Jira 티켓 조회(공식 Atlassian MCP)·검토 게이트·상태 전환 프로토콜
 ref/                       # 자동 주입되지 않음 — 해당 상황에 걸렸을 때만 읽는 참조
 ├── parallel.md          # 병렬 트랙 개발 (트랙을 나누기로 정한 뒤에만)
@@ -23,7 +23,7 @@ ref/                       # 자동 주입되지 않음 — 해당 상황에 걸
 ├── jira-transitions.md  # 상태 전환 프로토콜 (Transition ID 캐시 — 전환 직전에만)
 ├── troubleshooting.md   # git·워크트리·훅 증상과 원인
 ├── testing-traps.md     # 테스트에서 막히는 지점 (jest 기준)
-└── incidents.md         # 규약이 이렇게 생긴 이유 (원본 저장소의 사고 기록)
+└── incidents.md         # 규약이 이렇게 생긴 이유 (사고 기록 + 개입 실험 측정 결과)
 agents/
 ├── architect.md   # 조사·설계 — docs/plan/에 요구사항 스냅샷 + 계획서 작성 (구현 금지)
 ├── developer.md   # TDD 구현 — 커밋하지 않고 작업 트리만 남김
