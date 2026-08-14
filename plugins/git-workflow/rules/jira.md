@@ -1,11 +1,18 @@
 # Jira 연동 규칙
 
-모든 개발의 시작은 Jira 티켓이다. 티켓 조회와 상태 전환은 **공식 Atlassian MCP**(`mcp__claude_ai_Atlassian_Rovo__*`, cloudId `whatap-labs.atlassian.net`)로만 한다. **`JIRA_EMAIL`·`JIRA_API_TOKEN` 같은 환경변수 계정정보를 쓰는 스크립트나 REST 직접 호출은 쓰지 않는다.** MCP가 미연결이면 연결을 안내하고, 사용자가 원하면 티켓 없이 진행하되 상태 전환은 전부 스킵한다.
+모든 개발의 시작은 Jira 티켓이다.
+
+**티켓 조회는 세션에 Jira 조회 스킬이 있으면 그것을 먼저 쓴다.** `/jira {KEY}` 같은 스킬은 첨부 이미지를 로컬 파일로 내려받아 실제로 열어볼 수 있고, **공식 MCP는 그것을 하지 못한다** — 우선순위가 스킬에 있는 이유는 이 차이 하나다. 스킬이 없거나 실패하면(비정상 종료·자격증명 없음) **재시도하지 말고 즉시** 공식 MCP로 한 번 폴백한다.
+
+**상태 전환은 언제나 공식 Atlassian MCP**(`mcp__claude_ai_Atlassian_Rovo__*`, cloudId `whatap-labs.atlassian.net`)로 한다. 조회 스킬에 전환 기능이 있어도 쓰지 않는다 — 전환 규칙(`ref/jira-transitions.md`)이 MCP 기준으로 짜여 있어 경로를 섞으면 그 표 전체를 다시 검증해야 한다.
+
+**조회·전환을 위해 REST를 직접 호출하는 스크립트를 새로 만들지 않는다.** 이미 있는 조회 스킬을 쓰는 것은 여기에 해당하지 않는다. MCP가 미연결이면 연결을 안내하고, 사용자가 원하면 티켓 없이 진행하되 상태 전환은 전부 스킵한다.
 
 ## 티켓 조회
 
 - 이슈 키는 `[A-Z]+-\d+` 패턴으로 추출한다 — 인자 그대로, URL(`*.atlassian.net/browse/KEY`)에서, 또는 브랜치 이름 `feature/{KEY}(-{설명})`에서. 불명확하면 `AskUserQuestion`으로 확인한다
-- `getJiraIssue`(responseContentFormat `markdown`)로 `summary`·`status`·`description`·댓글·링크된 이슈까지 본다. 댓글에 요구사항 변경이나 결정 사항이 남아 있는 경우가 많다
+- 조회 스킬을 쓸 수 없어 MCP로 갈 때는 `getJiraIssue`(responseContentFormat `markdown`)로 `summary`·`status`·`description`·댓글·링크된 이슈까지 본다. 댓글에 요구사항 변경이나 결정 사항이 남아 있는 경우가 많다
+- **MCP로 조회할 때는 `fields`에 `attachment`를 반드시 포함한다.** 기본 필드 집합에 없어서, 넣지 않으면 **첨부가 있다는 사실조차 응답에 나타나지 않는다**
 - **`description`이 비어 보이면 본문 없음으로 단정하지 마라.** 본문이 다른 필드에 있는 카드가 있다 — 그 시점에 `ref/jira-fetch.md`를 읽고 보충 조회 절차를 따른다
 - **첨부 이미지를 해석해야 하면 해석 전에 `ref/jira-fetch.md`를 읽는다** — 신호 우선순위·이미지 해석 규칙·범위 확장 금지가 거기 있다
 - **`architect`에게는 조회한 본문·댓글의 결정 사항·첨부 경로를 원문 그대로 넘긴다.** 요약해서 넘기면 카드에 명시된 해결 방향을 잃는다
