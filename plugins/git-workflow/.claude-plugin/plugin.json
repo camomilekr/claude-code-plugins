@@ -1,6 +1,6 @@
 {
   "name": "git-workflow",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Jira 티켓에서 시작하는 architect → developer ↔ reviewer 개발 파이프라인. 티어 판정, 계획·구현·검토 루프, 커밋·PR, Jira 상태 전환 규칙과 에이전트를 제공합니다.",
   "author": {
     "name": "Jiho Seo",
