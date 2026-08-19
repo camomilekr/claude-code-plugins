@@ -1,0 +1,14 @@
+{
+  "name": "spec-driven-workflow",
+  "version": "0.3.0",
+  "description": "스펙 주도 단방향 개발 파이프라인. architect(계획) → spec-writer(실패하는 스펙 테스트로 완료 기준 고정) → developer(스펙을 green으로) → 결정론적 게이트 → 검토 1회로 진행합니다. developer ↔ reviewer 왕복 루프 없이, 검증을 결정론적 게이트와 새 컨텍스트 경계로 대체하는 것이 git-workflow 플러그인과의 차이입니다.",
+  "author": {
+    "name": "Jiho Seo",
+    "email": "camomile.kr@gmail.com",
+    "url": "https://github.com/camomilekr"
+  },
+  "homepage": "https://github.com/camomilekr/claude-code-plugins/tree/main/plugins/spec-driven-workflow",
+  "repository": "https://github.com/camomilekr/claude-code-plugins",
+  "license": "MIT",
+  "keywords": ["git", "workflow", "spec-driven", "tdd", "rules"]
+}
