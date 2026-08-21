@@ -16,6 +16,13 @@
 #   - --manifest 를 주면 매니페스트의 specFiles 경로가 테스트 대상에 합쳐진다
 #   - test 명령에 {paths} 자리표시자가 있으면 대상 경로로 치환된다 (경로 지정 강제)
 #
+#   - [경로 매치 프로브] 결합 test 가 통과하면 매니페스트의 specFiles 경로 각각을
+#     단독으로 한 번 더 실행한다. 러너는 경로 형식이 어긋난 파일을 조용히 건너뛰므로
+#     (실측: vitest 에 저장소 루트 기준 경로가 섞이면 그 경로만 빠진 채 exit 0),
+#     결합 실행의 초록불만으로는 "스펙이 전부 돌았다"를 보장할 수 없다.
+#     단독 실행은 매치 0 이면 러너가 실패하므로(vitest: "No test files found" exit 1)
+#     부분 매치 실패를 잡는다. --skip-path-probe 로 끌 수 있다.
+#
 # 종료 코드: 0 = 전부 통과, 1 = 하나 이상 실패, 2 = 설정·입력 오류 (침묵 통과 금지)
 
 set -uo pipefail
@@ -24,6 +31,7 @@ CONFIG=".claude/spec-workflow.json"
 MANIFEST=""
 SKIP_E2E=0
 SKIP_MUTATION=0
+SKIP_PATH_PROBE=0
 PATHS=()
 
 while [ $# -gt 0 ]; do
@@ -32,6 +40,7 @@ while [ $# -gt 0 ]; do
     --manifest)      MANIFEST="$2"; shift 2 ;;
     --skip-e2e)      SKIP_E2E=1; shift ;;
     --skip-mutation) SKIP_MUTATION=1; shift ;;
+    --skip-path-probe) SKIP_PATH_PROBE=1; shift ;;
     -h|--help)       grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)               PATHS+=("$1"); shift ;;
   esac
@@ -50,7 +59,7 @@ if [ ! -f "$CONFIG" ]; then
   exit 2
 fi
 
-export GATE_CONFIG="$CONFIG" GATE_MANIFEST="$MANIFEST" GATE_SKIP_E2E="$SKIP_E2E" GATE_SKIP_MUTATION="$SKIP_MUTATION"
+export GATE_CONFIG="$CONFIG" GATE_MANIFEST="$MANIFEST" GATE_SKIP_E2E="$SKIP_E2E" GATE_SKIP_MUTATION="$SKIP_MUTATION" GATE_SKIP_PATH_PROBE="$SKIP_PATH_PROBE"
 exec python3 - "${PATHS[@]+"${PATHS[@]}"}" <<'PYEOF'
 import json, os, subprocess, sys
 
@@ -58,6 +67,7 @@ config_path = os.environ["GATE_CONFIG"]
 manifest_path = os.environ["GATE_MANIFEST"]
 skip_e2e = os.environ["GATE_SKIP_E2E"] == "1"
 skip_mutation = os.environ["GATE_SKIP_MUTATION"] == "1"
+skip_path_probe = os.environ["GATE_SKIP_PATH_PROBE"] == "1"
 paths = list(sys.argv[1:])
 
 def die(msg):
@@ -90,7 +100,11 @@ if manifest_path:
     spec_paths = [p for p in spec_paths if p]
     if not spec_paths:
         die(f"매니페스트 {manifest_path} 의 specFiles 가 비어 있다.")
+    missing = [p for p in spec_paths if not os.path.exists(p)]
+    if missing:
+        die("매니페스트 specFiles 경로가 워크트리에 없다 (현재 디렉터리 기준): " + ", ".join(missing))
     paths += [p for p in spec_paths if p not in paths]
+probe_paths = spec_paths if manifest_path else []
 
 test_cmd = commands["test"]
 if "{paths}" in test_cmd:
@@ -121,6 +135,34 @@ for name, cmd, step_timeout in steps:
         results.append((name, cmd, "TIMEOUT", out, err + f"\n[{int(step_timeout)}초 타임아웃 초과 — 명령을 강제 종료했다]"))
 
 failed = [r for r in results if r[2] != 0]
+
+# [경로 매치 프로브] 결합 test 가 통과했을 때만, specFiles 를 하나씩 단독 실행한다.
+# 러너가 조용히 건너뛴 경로(형식 불일치, *.spec.ts 미포함 설정 등)는 결합 실행에서
+# 드러나지 않는다 — 단독 실행은 매치 0 이면 실패하므로 부분 침묵 통과를 잡는다.
+test_failed = any(r[0] == "test" and r[2] != 0 for r in results)
+if probe_paths and not skip_path_probe and not test_failed and "{paths}" in commands["test"]:
+    probe_ok = 0
+    for sp in probe_paths:
+        cmd1 = commands["test"].replace("{paths}", sp)
+        try:
+            proc = subprocess.run(cmd1, shell=True, capture_output=True, text=True, timeout=timeout)
+            code1, out1, err1 = proc.returncode, proc.stdout, proc.stderr
+        except subprocess.TimeoutExpired as e:
+            out1 = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
+            err1 = (e.stderr or b"").decode(errors="replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+            code1, err1 = "TIMEOUT", err1 + f"\n[{int(timeout)}초 타임아웃 초과]"
+        if code1 != 0:
+            results.append((f"path-probe:{sp}", cmd1, code1, out1,
+                            err1 + "\n[결합 실행은 통과했는데 단독 실행이 실패했다 — "
+                                   "이 경로가 결합 실행에서 조용히 건너뛰어졌을 가능성이 높다. "
+                                   "경로 기준(저장소 루트 대 앱 루트)과 러너의 include 패턴을 확인해라]"))
+        else:
+            probe_ok += 1
+    # 프로브가 돌았다는 양성 증거를 한 줄 남긴다 — 실측(PLAT-568 5-1차)에서 무음 통과는
+    # "돌았다"와 "건너뛰었다"를 로그로 구분할 수 없었다.
+    if probe_ok == len(probe_paths):
+        results.append((f"path-probe ({probe_ok}/{len(probe_paths)} 경로 단독 매치)", "(specFiles 경로별 단독 실행)", 0, "", ""))
+    failed = [r for r in results if r[2] != 0]
 
 print("== G1 결과 ==")
 for name, cmd, code, _, _ in results:
